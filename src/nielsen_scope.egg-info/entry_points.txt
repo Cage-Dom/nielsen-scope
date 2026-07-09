@@ -1,2 +1,0 @@
-[console_scripts]
-nielsen-scope = nielsen_scope.__main__:main
