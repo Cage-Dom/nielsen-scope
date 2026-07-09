@@ -1,0 +1,14 @@
+README.md
+pyproject.toml
+src/nielsen_scope/__init__.py
+src/nielsen_scope/__main__.py
+src/nielsen_scope/pipeline_registry.py
+src/nielsen_scope/settings.py
+src/nielsen_scope.egg-info/PKG-INFO
+src/nielsen_scope.egg-info/SOURCES.txt
+src/nielsen_scope.egg-info/dependency_links.txt
+src/nielsen_scope.egg-info/entry_points.txt
+src/nielsen_scope.egg-info/requires.txt
+src/nielsen_scope.egg-info/top_level.txt
+src/nielsen_scope/pipelines/__init__.py
+tests/test_run.py
