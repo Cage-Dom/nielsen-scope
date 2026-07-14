@@ -17,6 +17,11 @@ dependencies = [
     "statsforecast>=2.0.2",
     "docker>=7.1.0",
     "dash>=4.4.0",
+    "sqlalchemy>=2.0.51",
+    "openpyxl>=3.1.5",
+    "psycopg2-binary>=2.9.12",
+    "psycopg[binary]>=3.3.4",
+    "kedro-datasets[pandas]>=9.5.0",
 ]
 
 [project.scripts]

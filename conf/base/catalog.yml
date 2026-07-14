@@ -1,4 +1,23 @@
-# Here you can define all your datasets by using simple YAML syntax.
-#
-# Documentation for this file format can be found in "The Data Catalog"
-# Link: https://docs.kedro.org/en/stable/catalog-data/introduction/#data-catalog
+#Raw excel sourcefiles, each containing 4 sheets per category distinctions
+book_isbn_file:
+  type: pandas.ExcelDataset
+  filepath: data/01_raw/ISBN List.xlsx
+  load_args:
+    engine: openpyxl
+    sheet_name: null
+
+book_sales_file:
+  type: pandas.ExcelDataset
+  filepath: data/01_raw/UK Weekly Trended Timeline from 200101_202429.xlsx
+  load_args:
+    engine: openpyxl
+    sheet_name: null
+
+sales_features:
+  type: pandas.SQLQueryDataset
+  filepath: src/nielsen_scope/sql/features.sql
+  credentials: postgres
+
+feature_table:
+  type: pandas.ParquetDataset
+  filepath: data/04_feature/sales_features.parquet

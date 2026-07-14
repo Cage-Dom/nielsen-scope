@@ -1,0 +1,37 @@
+sales_field_mappings: {
+  'ISBN': 'isbn',
+  'Title': 'title',
+  'Author': 'author',
+  'Reporting_Interval': 'reporting_interval',
+  'End_Date': 'end_date',
+  'Volume': 'volume',
+  'Value': 'sale_value',
+  'ASP': 'asp',
+  'RRP': 'rrp',
+  'Binding': 'binding',
+  'Imprint': 'imprint',
+  'Publisher_Group': 'publisher_group',
+  'Product_Class': 'product_class',
+  'sheet_name': 'category'
+}
+
+isbn_field_mappings: {
+  'ISBN': 'isbn',
+  'Title': 'title',
+  'Author': 'author',
+  'Imprint': 'imprint',
+  'Publisher_Group': 'publisher_group',
+  'RRP': 'rrp',
+  'Binding': 'binding',
+  'Publication_Date': 'publication_date',
+  'Country_of_Publication': 'country_of_publication',
+  'Product_Class': 'product_class',
+  'sheet_name': 'category'
+}
+
+sheet_name_mappings: {
+  'F': "Adult Fiction",
+  'S': "Adult Non-Fiction Specialist",
+  'T': "Adult Non-Fiction Trade",
+  'Y': "Children's, YA & Educational"
+}
