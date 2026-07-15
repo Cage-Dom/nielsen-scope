@@ -21,3 +21,9 @@ sales_features:
 feature_table:
   type: pandas.ParquetDataset
   filepath: data/04_feature/sales_features.parquet
+
+book_xgb_model:
+  type: kedro_mlflow.io.models.MlflowModelTrackingDataset
+  flavor: mlflow.xgboost
+  save_args:
+    registered_model_name: nielsen_xgb_alchemist

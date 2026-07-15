@@ -35,3 +35,18 @@ sheet_name_mappings: {
   'T': "Adult Non-Fiction Trade",
   'Y': "Children's, YA & Educational"
 }
+
+training: 
+  isbn: "9780722532935"
+  model_start_date: "2012-01-01"
+  model_type: xgboost
+  cv:
+    n_splits: 5
+    test_horizon: 32
+  model_params:
+    xgboost:
+      n_estimators: 100
+      max_depth: 7
+      learning_rate: 0.2
+      objective: "reg:squarederror"
+      random_state: 42

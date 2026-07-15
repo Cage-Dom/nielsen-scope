@@ -38,3 +38,11 @@ data/08_reporting/*
 # Project planning
 PLAN.md
 IMPLEMENTATION-LOG.md
+
+# MLflow local tracking
+mlflow.db
+mlruns/
+mlartifacts/
+
+# kedro-viz cache
+.viz/
