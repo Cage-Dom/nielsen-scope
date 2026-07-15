@@ -88,7 +88,7 @@ def ingest_sales_data(sheets: dict) -> pd.DataFrame:
         raise KeyError(f"Expected sales data with 'End_Date' in Sales Dataset")
 
     df["End_Date"] = pd.to_datetime(df["End_Date"])
-    return df.sort_values("End_Date")
+    return df.sort_values("End_Date").reset_index(drop=True)
 
     
 def resample_weekly(df: pd.DataFrame) -> pd.DataFrame:
