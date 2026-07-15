@@ -8,9 +8,7 @@ SELECT
     s.isbn,
     s.end_date,
     s.volume,                                            -- target: weekly units sold
-    -- Autoregressive lags = volume N weeks ago. LAG(col, N) OVER w reads the
-    -- value N rows back within the window w. 1-4 recent momentum, 8/13/26
-    -- sub-annual, 52 = same week last year (annual seasonality).
+    -- Autoregressive lags
     LAG(s.volume, 1)  OVER w AS volume_lag_1,
     LAG(s.volume, 2)  OVER w AS volume_lag_2,
     LAG(s.volume, 3)  OVER w AS volume_lag_3,
@@ -19,7 +17,7 @@ SELECT
     LAG(s.volume, 13) OVER w AS volume_lag_13,
     LAG(s.volume, 26) OVER w AS volume_lag_26,
     LAG(s.volume, 52) OVER w AS volume_lag_52,
-    -- trailing rolling means, EXCLUDING the current week (no target leakage)
+    -- trailing rolling means, excluding current week
     AVG(s.volume) OVER (w ROWS BETWEEN 4  PRECEDING AND 1 PRECEDING) AS volume_roll_4,
     AVG(s.volume) OVER (w ROWS BETWEEN 12 PRECEDING AND 1 PRECEDING) AS volume_roll_12,
     -- price signals, LAGGED only: same-week asp/value are 0 on zero-filled
@@ -31,8 +29,8 @@ SELECT
     EXTRACT(MONTH   FROM s.end_date)::int AS month,
     EXTRACT(QUARTER FROM s.end_date)::int AS quarter,
     EXTRACT(YEAR    FROM s.end_date)::int AS year,
-    -- static book metadata (constant per ISBN; raw — encoding is a modelling step)
-    b.category,                                          -- b.<col> = a column from the 'books' dimension
+    -- static book metadata
+    b.category,
     b.rrp,
     b.binding,
     b.publisher_group,
