@@ -27,6 +27,7 @@ dependencies = [
     "xgboost>=3.2.0",
     "scikit-learn>=1.7.2",
     "kedro-viz>=12.4.0",
+    "pytest>=7.4.4",
 ]
 
 [project.scripts]
