@@ -7,8 +7,9 @@ from sklearn.metrics import (
     mean_absolute_percentage_error,
     mean_squared_error,
 )
-from sklearn.model_selection import TimeSeriesSplit
+from sklearn.model_selection import TimeSeriesSplit, train_test_split
 from xgboost import XGBRegressor
+import optuna
 
 
 logger = logging.getLogger(__name__)
@@ -45,11 +46,14 @@ def select_book_features(features: pd.DataFrame, params: dict) -> tuple[pd.DataF
     return X, y
 
 
-def walk_forward_evaluate_xgb(X: pd.DataFrame, y: pd.Series, params: dict) -> dict:
+
+
+def cv_xgb(X: pd.DataFrame, y: pd.Series, params: dict) -> dict:
     """
-    TimeSeriesSplit walk forward cross validation with XGBoost.
+    TimeSeriesSplit cross validation with XGBoost.
     Log-per fold and aggregate MAE/RMSE/MAPE to the active MLflow run. 
-    MAE is primary; MAPE is computed over non-zero actuals only"""
+    MAE is primary; MAPE is computed over non-zero actuals only
+    """
     cv = params['cv']
     model_params = params['model_params'][params['model_type']]
     splitter = TimeSeriesSplit(n_splits=cv["n_splits"], test_size=cv["test_horizon"])
@@ -100,6 +104,48 @@ def walk_forward_evaluate_xgb(X: pd.DataFrame, y: pd.Series, params: dict) -> di
     logger.info("walk_forward aggregate: %s", metrics)
     
     return metrics
+
+
+def objective(trial, params: dict, X: pd.DataFrame, y: pd.Series, model_type: str) -> float:
+    """Optuna objective: sample xgboost hyperparams, score via cv_xgb's
+    walk-forward MAE (lower is better)."""
+    if model_type == 'xgboost':
+        raise NotImplementedError(f"Hyperparam tuning for {model_type} not implemented")
+
+    #assign param limits for xgboost models
+    tuning_cfg = params['hyperparam_tuning'][model_type]
+    trial_params = dict(params)
+    trial_params['model_type'] = model_type
+
+    #set the model params for the trial
+    trial_params['model_params'] = {
+        model_type: {
+            "n_estimators": trial.suggest_int(
+                "n_estimators",
+                tuning_cfg['n_estimators']['lower'],
+                tuning_cfg['n_estimators']['upper'],
+                log=True,
+            ),
+            "max_depth": trial.suggest_int(
+                "max_depth",
+                tuning_cfg['max_depth']['lower'],
+                tuning_cfg['max_depth']['upper'],
+            ),
+            "learning_rate": trial.suggest_float(
+                "learning_rate",
+                tuning_cfg['learning_rate']['lower'],
+                tuning_cfg['learning_rate']['upper'],
+                log=True,
+            ),
+        }
+    }
+
+    metrics = cv_xgb(X, y, trial_params)
+    return metrics["mae_mean"]
+
+def optuna_hyperparam_tune_xgb(X: pd.DataFrame, y: pd.Series, params: dict):
+    """Perform optuna trial search over hyperparam grid"""
+
 
 
 def train_final_xgb_model(X: pd.DataFrame, y: pd.Series, params: dict) -> XGBRegressor:
