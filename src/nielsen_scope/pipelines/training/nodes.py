@@ -109,7 +109,7 @@ def cv_xgb(X: pd.DataFrame, y: pd.Series, params: dict) -> dict:
 def objective(trial, params: dict, X: pd.DataFrame, y: pd.Series, model_type: str) -> float:
     """Optuna objective: sample xgboost hyperparams, score via cv_xgb's
     walk-forward MAE (lower is better)."""
-    if model_type == 'xgboost':
+    if model_type != 'xgboost':
         raise NotImplementedError(f"Hyperparam tuning for {model_type} not implemented")
 
     #assign param limits for xgboost models
