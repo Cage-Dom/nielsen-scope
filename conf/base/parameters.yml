@@ -53,9 +53,9 @@ training:
 
 hyperparam_tuning:
   optuna:
-    n_trials 100
-    n_warmup_steps = 5
-    direction = "minimize"
+    n_trials: 100
+    n_warmup_steps: 5
+    direction: "minimize"
   xgboost:
     n_estimators:
       upper: 200
