@@ -6,7 +6,7 @@ import nielsen_scope.pipelines.training.nodes as nodes
 from nielsen_scope.pipelines.training.nodes import (
     select_book_features,
     train_final_xgb_model,
-    walk_forward_evaluate_xgb,
+    cv_xgb,
 )
 
 
@@ -46,11 +46,11 @@ def test_select_book_features_drops_non_numeric_and_target():
     assert y.name == "volume"
 
 
-def test_walk_forward_evaluate_xgb_returns_finite_metrics(monkeypatch):
+def test_cv_xgb_returns_finite_metrics(monkeypatch):
     monkeypatch.setattr(nodes.mlflow, "log_metric", lambda *a, **k: None)
     monkeypatch.setattr(nodes.mlflow, "log_metrics", lambda *a, **k: None)
     X, y = select_book_features(_synthetic_features(), _params())
-    metrics = walk_forward_evaluate_xgb(X, y, _params())
+    metrics = cv_xgb(X, y, _params())
     assert metrics["n_folds"] == 5
     assert np.isfinite(metrics["mae_mean"])
     assert np.isfinite(metrics["rmse_mean"])
