@@ -50,3 +50,20 @@ training:
       learning_rate: 0.2
       objective: "reg:squarederror"
       random_state: 42
+
+hyperparam_tuning:
+  optuna:
+    n_trials 100
+    n_warmup_steps = 5
+    direction = "minimize"
+  xgboost:
+    n_estimators:
+      upper: 200
+      lower: 50
+    max_depth: 
+      upper: 7
+      lower: 3
+    learning_rate: 
+      upper: 0.2
+      lower: 0.05
+ 
