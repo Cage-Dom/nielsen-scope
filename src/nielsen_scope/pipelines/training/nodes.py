@@ -143,8 +143,24 @@ def objective(trial, params: dict, X: pd.DataFrame, y: pd.Series, model_type: st
     metrics = cv_xgb(X, y, trial_params)
     return metrics["mae_mean"]
 
-def optuna_hyperparam_tune_xgb(X: pd.DataFrame, y: pd.Series, params: dict):
-    """Perform optuna trial search over hyperparam grid"""
+def optuna_hyperparam_tune_xgb(X: pd.DataFrame, y: pd.Series, params: dict) -> dict:
+    """Optuna search over the XGBoost grid in params['hyperparam_tuning'], scored by
+    cv_xgb's walk-forward mae_mean. Returns the best trial's params, shaped for
+    params['model_params']['xgboost']. Expects a merged dict: the 'training' block
+    plus the top-level 'hyperparam_tuning' block."""
+    tuning_cfg = params["hyperparam_tuning"]["optuna"]
+    seed = params["model_params"]["xgboost"].get("random_state", 42)
+    study = optuna.create_study(
+        direction=tuning_cfg["direction"],
+        sampler=optuna.samplers.TPESampler(seed=seed),
+    )
+    study.optimize(
+        lambda trial: objective(trial, params, X, y, "xgboost"),
+        n_trials=tuning_cfg["n_trials"],
+    )
+    logger.info("optuna best_value=%.3f best_params=%s", study.best_value, study.best_params)
+    
+    return study.best_params
 
 
 
