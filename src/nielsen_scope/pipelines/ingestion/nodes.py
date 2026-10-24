@@ -26,7 +26,7 @@ def create_schema(connection_string: str) -> None:
         sql = f.read()
 
     #Connect to PostgreSQL
-    print(f"Connecting to PostgreSQL: {connection_string}")
+    print(f"Connecting to PostgreSQL")
     engine = create_engine(connection_string)
 
     #Execute each SQL statement
