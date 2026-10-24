@@ -18,7 +18,7 @@ def create_pipeline(**kwargs) -> Pipeline:
         ),
         node(
             func=train_final_xgb_model,
-            inputs=["book_X", "book_y", "params:hyperparam_tuning:xgboost"],
+            inputs=["book_X", "book_y", "params:training"],
             outputs="book_xgb_model",
             name="train_final_xgb_model_node",
         )
