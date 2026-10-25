@@ -38,6 +38,7 @@ data/08_reporting/*
 # Project planning
 PLAN.md
 IMPLEMENTATION-LOG.md
+assumptions.md
 
 # MLflow local tracking
 mlflow.db
@@ -46,3 +47,6 @@ mlartifacts/
 
 # kedro-viz cache
 .viz/
+
+# Pytest coverage output file
+.coverage
