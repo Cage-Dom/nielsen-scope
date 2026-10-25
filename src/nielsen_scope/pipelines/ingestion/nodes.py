@@ -69,7 +69,7 @@ def _read_excel_concat(sheets: dict) -> pd.DataFrame:
         #rename for mapping later and trim so just the letter identifier
         df = df.rename(columns={'sheet_name': 'category'})
         df['category'] = df['category'].apply(lambda x: x[0])
-        print(f"Excel file read successfully.")
+        print("Excel file read successfully.")
 
         return df
 
@@ -85,7 +85,7 @@ def ingest_sales_data(sheets: dict) -> pd.DataFrame:
     df = _convert_fieldnames(df)
 
     if "End_Date" not in df.columns:
-        raise KeyError(f"Expected sales data with 'End_Date' in Sales Dataset")
+        raise KeyError("Expected sales data with 'End_Date' in Sales Dataset")
 
     df["End_Date"] = pd.to_datetime(df["End_Date"])
     return df.sort_values("End_Date").reset_index(drop=True)
