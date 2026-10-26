@@ -202,7 +202,7 @@ def objective(trial, params: dict, X: pd.DataFrame, y: pd.Series, model_type: st
         }
     }
 
-    metrics = cross_validate(X, y, trial_params)
+    metrics, _ = cross_validate(X, y, trial_params)
     return metrics["mae_mean"]
 
 def optuna_hyperparam_tune_xgb(X: pd.DataFrame, y: pd.Series, params: dict) -> dict:
