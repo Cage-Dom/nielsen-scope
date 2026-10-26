@@ -169,7 +169,7 @@ def cross_validate(
 
 
 def objective(trial, params: dict, X: pd.DataFrame, y: pd.Series, model_type: str) -> float:
-    """Optuna objective: sample xgboost hyperparams, score via cv_xgb's
+    """Optuna objective: sample xgboost hyperparams, score via cross_validate's
     walk-forward MAE (lower is better)."""
     if model_type != 'xgboost':
         raise NotImplementedError(f"Hyperparam tuning for {model_type} not implemented")
@@ -202,12 +202,12 @@ def objective(trial, params: dict, X: pd.DataFrame, y: pd.Series, model_type: st
         }
     }
 
-    metrics = cv_xgb(X, y, trial_params)
+    metrics = cross_validate(X, y, trial_params)
     return metrics["mae_mean"]
 
 def optuna_hyperparam_tune_xgb(X: pd.DataFrame, y: pd.Series, params: dict) -> dict:
     """Optuna search over the XGBoost grid in params['hyperparam_tuning'], scored by
-    cv_xgb's walk-forward mae_mean. Returns the best trial's params, shaped for
+    cross_validate's walk-forward mae_mean. Returns the best trial's params, shaped for
     params['model_params']['xgboost']. Expects a merged dict: the 'training' block
     plus the top-level 'hyperparam_tuning' block."""
     tuning_cfg = params["hyperparam_tuning"]["optuna"]
