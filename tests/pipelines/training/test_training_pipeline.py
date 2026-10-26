@@ -8,11 +8,11 @@ import nielsen_scope.pipelines.training.nodes as nodes
 from nielsen_scope.pipelines.training.nodes import (
     select_book_features,
     train_final_xgb_model,
-    cv_xgb,
+    cross_validate,
     objective,
     optuna_hyperparam_tune_xgb,
 )
-
+from nielsen_scope.pipelines.training.models import get_model
 
 def _synthetic_features(n: int = 400, isbn: str = "9780722532935") -> pd.DataFrame:
     dates = pd.date_range("2012-01-01", periods=n, freq='W')
@@ -43,26 +43,56 @@ def _params() -> dict:
 
 
 def test_select_book_features_drops_non_numeric_and_target():
-    X, y = select_book_features(_synthetic_features(), _params())
+    X, y, _ = select_book_features(_synthetic_features(), _params())
     for dropped in ("volume", "isbn", "end_date", "category"):
         assert dropped not in X.columns
     assert list(X.index) == list(range(len(X)))  # contiguous RangeIndex
     assert y.name == "volume"
 
 
-def test_cv_xgb_returns_finite_metrics(monkeypatch):
+def test_cross_validate_returns_finite_metrics_and_predictions(monkeypatch):
     monkeypatch.setattr(nodes.mlflow, "log_metric", lambda *a, **k: None)
     monkeypatch.setattr(nodes.mlflow, "log_metrics", lambda *a, **k: None)
-    X, y = select_book_features(_synthetic_features(), _params())
-    metrics = cv_xgb(X, y, _params())
+    X, y, dates = select_book_features(_synthetic_features(), _params())
+    metrics, preds = cross_validate(X, y, _params(), dates)
     assert metrics["n_folds"] == 5
     assert np.isfinite(metrics["mae_mean"])
     assert np.isfinite(metrics["rmse_mean"])
+    assert list(preds.columns) == ["fold", "end_date", "y_true", "y_pred"]
+    assert len(preds) == 160 and preds["end_date"].is_unique
+
+
+def test_min_lag_drops_short_lags_and_rolls():
+    params = _params() | {"min_lag": 32}
+    X, _, _ = select_book_features(_synthetic_features(), params)
+    assert "volume_lag_1" not in X.columns and "volume_roll_4" not in X.columns
+    assert "volume_lag_52" in X.columns and "week_of_year" in X.columns
+
+
+def test_min_lag_below_test_horizon_raises():
+    with pytest.raises(ValueError, match="min_lag"):
+        select_book_features(_synthetic_features(), _params() | {"min_lag": 16})
+
+
+def test_exclude_features_drops_and_unknown_name_raises():
+    X, _, _ = select_book_features(
+        _synthetic_features(), _params() | {"exclude_features": ["year"]}
+    )
+    assert "year" not in X.columns
+    with pytest.raises(ValueError, match="nope"):
+        select_book_features(
+            _synthetic_features(), _params() | {"exclude_features": ["nope"]}
+        )
+
+
+def test_get_model_unknown_type_raises():
+    with pytest.raises(ValueError, match="Unknown model_type"):
+        get_model("nope")
 
 
 def test_train_final_xgb_model_returns_fitted_estimator(monkeypatch):
     monkeypatch.setattr(nodes.mlflow, "log_params", lambda *a, **k: None)
-    X, y = select_book_features(_synthetic_features(), _params())
+    X, y, _ = select_book_features(_synthetic_features(), _params())
     model = train_final_xgb_model(X, y, _params())
     assert isinstance(model, XGBRegressor)
     pred = model.predict(X)
@@ -89,7 +119,7 @@ def _silence_mlflow(monkeypatch):
 
 def test_objective_returns_finite_mae(monkeypatch):
     _silence_mlflow(monkeypatch)
-    X, y = select_book_features(_synthetic_features(), _params())
+    X, y, _ = select_book_features(_synthetic_features(), _params())
     trial = optuna.trial.FixedTrial(
         {"n_estimators": 8, "max_depth": 3, "learning_rate": 0.1}
     )
@@ -98,14 +128,14 @@ def test_objective_returns_finite_mae(monkeypatch):
 
 
 def test_objective_rejects_non_xgboost_model():
-    X, y = select_book_features(_synthetic_features(), _params())
+    X, y, _ = select_book_features(_synthetic_features(), _params())
     with pytest.raises(NotImplementedError):
         objective(optuna.trial.FixedTrial({}), _tuning_params(), X, y, "catboost")
 
 
 def test_tuner_returns_best_params_within_bounds(monkeypatch):
     _silence_mlflow(monkeypatch)
-    X, y = select_book_features(_synthetic_features(), _params())
+    X, y, _ = select_book_features(_synthetic_features(), _params())
     best = optuna_hyperparam_tune_xgb(X, y, _tuning_params())
     assert set(best) == {"n_estimators", "max_depth", "learning_rate"}
     assert 5 <= best["n_estimators"] <= 10
