@@ -10,11 +10,10 @@ from sklearn.metrics import (
     mean_absolute_percentage_error,
     mean_squared_error,
 )
-from sklearn.model_selection import TimeSeriesSplit, train_test_split
+from sklearn.model_selection import TimeSeriesSplit
 from xgboost import XGBRegressor
 
 from .models import get_model
-
 
 logger = logging.getLogger(__name__)
 
@@ -221,7 +220,7 @@ def optuna_hyperparam_tune_xgb(X: pd.DataFrame, y: pd.Series, params: dict) -> d
         n_trials=tuning_cfg["n_trials"],
     )
     logger.info("optuna best_value=%.3f best_params=%s", study.best_value, study.best_params)
-    
+
     return study.best_params
 
 
@@ -232,7 +231,7 @@ def train_final_xgb_model(X: pd.DataFrame, y: pd.Series, params: dict) -> XGBReg
     #load and log params
     model_params = params["model_params"][params["model_type"]]
     mlflow.log_params(model_params)
-    
+
     #train
     model = XGBRegressor(**model_params)
     model.fit(X, y)
@@ -240,5 +239,5 @@ def train_final_xgb_model(X: pd.DataFrame, y: pd.Series, params: dict) -> XGBReg
         "train_final_model: fitted %s on %d rows x %d features",
         params["model_type"], len(X), X.shape[1],
     )
-    return model  
+    return model
 

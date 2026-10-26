@@ -4,21 +4,22 @@ import pandas as pd
 import pytest
 from xgboost import XGBRegressor
 
-import nielsen_scope.pipelines.training.nodes as nodes
+from nielsen_scope.pipelines.training import nodes
+from nielsen_scope.pipelines.training.models import get_model
 from nielsen_scope.pipelines.training.nodes import (
-    select_book_features,
-    train_final_xgb_model,
     cross_validate,
     objective,
     optuna_hyperparam_tune_xgb,
+    select_book_features,
+    train_final_xgb_model,
 )
-from nielsen_scope.pipelines.training.models import get_model
+
 
 def _synthetic_features(n: int = 400, isbn: str = "9780722532935") -> pd.DataFrame:
     dates = pd.date_range("2012-01-01", periods=n, freq='W')
     rng = np.random.default_rng(42)
     vol = np.arange(n) + rng.integers(0, 5, n)
-    
+
     return pd.DataFrame(
         {
             "isbn": isbn,

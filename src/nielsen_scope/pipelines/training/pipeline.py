@@ -1,4 +1,5 @@
-from kedro.pipeline import Pipeline, node 
+from kedro.pipeline import Pipeline, node
+
 from .nodes import cross_validate, select_book_features, train_final_xgb_model
 
 

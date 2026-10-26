@@ -3,7 +3,7 @@ from pathlib import Path
 import pandas as pd
 import pytest
 
-import nielsen_scope.pipelines.training.nodes as nodes
+from nielsen_scope.pipelines.training import nodes
 from nielsen_scope.pipelines.training.nodes import (
     cross_validate,
     select_book_features,
