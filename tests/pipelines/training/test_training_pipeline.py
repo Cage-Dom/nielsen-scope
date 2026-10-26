@@ -5,7 +5,7 @@ import pytest
 from xgboost import XGBRegressor
 
 from nielsen_scope.pipelines.training import nodes
-from nielsen_scope.pipelines.training.models import get_model
+from nielsen_scope.pipelines.training.models import get_model, predict_naive
 from nielsen_scope.pipelines.training.nodes import (
     cross_validate,
     objective,
@@ -147,3 +147,60 @@ def test_tuner_returns_best_params_within_bounds(monkeypatch):
     assert 5 <= best["n_estimators"] <= 10
     assert 2 <= best["max_depth"] <= 3
     assert 0.05 <= best["learning_rate"] <= 0.2
+
+
+ZEROED_ROWS = 10
+
+
+def _naive_params() -> dict:
+    return _params() | {"model_type": "naive", "model_params": {}}
+
+
+def test_predict_naive_returns_lag_52():
+    X, _, _ = select_book_features(_synthetic_features(), _params())
+    pred = predict_naive(None, X.tail(10))
+    assert list(pred) == list(X["volume_lag_52"].tail(10))
+
+
+def test_naive_relative_mae_is_one(monkeypatch):
+    _silence_mlflow(monkeypatch)
+    X, y, dates = select_book_features(_synthetic_features(), _naive_params())
+    metrics, preds = cross_validate(X, y, _naive_params(), dates)
+    assert metrics["relative_mae"] == pytest.approx(1.0)
+    assert list(preds["y_pred"]) == list(X["volume_lag_52"].tail(len(preds)))
+
+
+def test_mape_excluded_rows_counts_zero_actuals(monkeypatch):
+    _silence_mlflow(monkeypatch)
+    X, y, dates = select_book_features(_synthetic_features(), _naive_params())
+    y = y.copy()
+    y.iloc[-ZEROED_ROWS:] = 0
+    metrics, _ = cross_validate(X, y, _naive_params(), dates)
+    assert metrics["mape_excluded_rows"] == ZEROED_ROWS
+
+
+def test_relative_mae_is_nan_when_naive_is_perfect(monkeypatch):
+    _silence_mlflow(monkeypatch)
+    df = _synthetic_features()
+    df["volume"] = 100
+    df["volume_lag_52"] = 100.0
+    X, y, dates = select_book_features(df, _naive_params())
+    metrics, _ = cross_validate(X, y, _naive_params(), dates)
+    assert metrics["mae_mean"] == 0
+    assert np.isnan(metrics["relative_mae"])
+
+
+def test_naive_without_lag_52_raises(monkeypatch):
+    _silence_mlflow(monkeypatch)
+    params = _naive_params() | {"exclude_features": ["volume_lag_52"]}
+    X, y, dates = select_book_features(_synthetic_features(), params)
+    with pytest.raises(ValueError, match="volume_lag_52"):
+        cross_validate(X, y, params, dates)
+
+
+def test_relative_mae_is_nan_for_xgboost_without_lag_52(monkeypatch):
+    _silence_mlflow(monkeypatch)
+    params = _params() | {"exclude_features": ["volume_lag_52"]}
+    X, y, dates = select_book_features(_synthetic_features(), params)
+    metrics, _ = cross_validate(X, y, params, dates)
+    assert np.isnan(metrics["relative_mae"])
