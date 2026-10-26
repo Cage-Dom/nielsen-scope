@@ -1,7 +1,10 @@
 import logging
+import re
+
 import mlflow
-import numpy as np 
-import pandas as pd 
+import numpy as np
+import optuna
+import pandas as pd
 from sklearn.metrics import (
     mean_absolute_error,
     mean_absolute_percentage_error,
@@ -9,16 +12,54 @@ from sklearn.metrics import (
 )
 from sklearn.model_selection import TimeSeriesSplit, train_test_split
 from xgboost import XGBRegressor
-import optuna
+
+from .models import get_model
 
 
 logger = logging.getLogger(__name__)
 
 
-def select_book_features(features: pd.DataFrame, params: dict) -> tuple[pd.DataFrame, pd.Series]:
+LAG_COLUMN = re.compile(r".+_lag_(\d+)$")
+
+
+def apply_feature_policy(X: pd.DataFrame, params: dict) -> pd.DataFrame:
+    """Drop columns that are excluded by config or unavailable at forecast time.
+
+    min_lag=None keeps every column (one-step-ahead, the Stage 2 behaviour).
+    min_lag=L keeps *_lag_N only when N >= L, drops every *_roll_* column (their
+    windows include lag 1) and keeps calendar/static columns. L below
+    cv.test_horizon raises, because the lags would read actuals inside the test
+    window.
+    """
+    min_lag = params.get("min_lag")
+    exclude = list(params.get("exclude_features") or [])
+
+    missing = [c for c in exclude if c not in X.columns]
+    if missing:
+        raise ValueError(f"exclude_features not in feature bank: {missing}")
+
+    drop = set(exclude)
+    if min_lag is not None:
+        test_horizon = params["cv"]["test_horizon"]
+        if min_lag < test_horizon:
+            raise ValueError(
+                f"min_lag={min_lag} < cv.test_horizon={test_horizon}: lag "
+                "features would read actuals inside the test window"
+            )
+        for col in X.columns:
+            match = LAG_COLUMN.match(col)
+            if "_roll_" in col or (match and int(match.group(1)) < min_lag):
+                drop.add(col)
+    return X.drop(columns=sorted(drop))
+
+
+def select_book_features(
+    features: pd.DataFrame, params: dict
+) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
     """Filter Feature Bank to one ISBN ref for the modelling window,
-    returning features (X) and target (y) matrix. String datatypes
-    are dropped.
+    returning features (X), target (y) and the week-ending dates. String
+    datatypes are dropped; params min_lag / exclude_features then apply the
+    feature policy (see apply_feature_policy).
     """
     isbn = str(params['isbn'])
     start = pd.Timestamp(params["model_start_date"])
@@ -41,11 +82,10 @@ def select_book_features(features: pd.DataFrame, params: dict) -> tuple[pd.DataF
     #assign features and target
     y = df['volume']
     X = df.select_dtypes(include="number").drop(columns=["volume"])
+    X = apply_feature_policy(X, params)
     logger.info("select_book_features: ISBN=%s rows=%d features=%d", isbn, len(X), X.shape[1])
-    
-    return X, y
 
-
+    return X, y, df['end_date']
 
 
 def cv_xgb(X: pd.DataFrame, y: pd.Series, params: dict) -> dict:
