@@ -8,6 +8,7 @@ from dataclasses import dataclass
 
 import numpy as np
 import pandas as pd
+from catboost import CatBoostRegressor
 from statsforecast import StatsForecast
 from statsforecast.models import AutoARIMA, AutoETS, CrostonSBA
 from xgboost import XGBRegressor
@@ -26,6 +27,18 @@ def fit_xgboost(X: pd.DataFrame, y: pd.Series, model_params: dict) -> XGBRegress
 
 
 def predict_xgboost(model: XGBRegressor, X: pd.DataFrame) -> np.ndarray:
+    return model.predict(X)
+
+
+def fit_catboost(X: pd.DataFrame, y: pd.Series, model_params: dict) -> CatBoostRegressor:
+    """allow_writing_files defaults to False so a fit does not write catboost_info/
+    into the working directory; model_params can override it."""
+    model = CatBoostRegressor(**{"allow_writing_files": False, **model_params})
+    model.fit(X, y)
+    return model
+
+
+def predict_catboost(model: CatBoostRegressor, X: pd.DataFrame) -> np.ndarray:
     return model.predict(X)
 
 
@@ -153,6 +166,7 @@ def predict_statsforecast(model: FittedStatsForecast, X: pd.DataFrame) -> np.nda
 
 MODELS: dict[str, tuple[Callable, Callable]] = {
     "xgboost": (fit_xgboost, predict_xgboost),
+    "catboost": (fit_catboost, predict_catboost),
     "naive": (fit_naive, predict_naive),
     "autoarima": (fit_autoarima, predict_statsforecast),
     "crostonsba": (fit_crostonsba, predict_statsforecast),

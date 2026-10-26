@@ -52,6 +52,10 @@ training:
       learning_rate: 0.2
       objective: "reg:squarederror"
       random_state: 42
+    catboost:
+      random_seed: 42
+      verbose: 0
+      loss_function: "RMSE"
     autoarima:
       season_length: 52
       max_p: 5
