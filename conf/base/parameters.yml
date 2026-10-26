@@ -36,7 +36,7 @@ sheet_name_mappings: {
   'Y': "Children's, YA & Educational"
 }
 
-training: 
+training:
   isbn: "9780722532935"
   model_start_date: "2012-01-01"
   model_type: xgboost
@@ -52,6 +52,16 @@ training:
       learning_rate: 0.2
       objective: "reg:squarederror"
       random_state: 42
+    autoarima:
+      season_length: 52
+      max_p: 5
+      max_q: 5
+      max_P: 2
+      max_Q: 2
+      stepwise: true
+      ic: aic
+      fit_timeout_seconds: 900
+    crostonsba: {}
 
 hyperparam_tuning:
   optuna:

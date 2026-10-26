@@ -1,4 +1,5 @@
 import logging
+import os
 from pathlib import Path
 
 import pandas as pd
@@ -14,6 +15,7 @@ logger = logging.getLogger(__name__)
 
 ALCHEMIST = "9780722532935"
 N_SPOT_CHECKS = 3
+RUN_SLOW = bool(os.environ.get("RUN_SLOW"))
 PARQUET = Path(__file__).resolve().parents[3] / "data/04_feature/sales_features.parquet"
 RAW_XLSX = (
     Path(__file__).resolve().parents[3]
@@ -57,6 +59,24 @@ def _params(**overrides) -> dict:
 
 def _naive_params(**overrides) -> dict:
     return _params(model_type="naive", model_params={}, **overrides)
+
+
+def _crostonsba_params() -> dict:
+    return _params(model_type="crostonsba", model_params={"crostonsba": {}})
+
+
+def _autoarima_params() -> dict:
+    autoarima = {
+        "season_length": 52,
+        "max_p": 5,
+        "max_q": 5,
+        "max_P": 2,
+        "max_Q": 2,
+        "stepwise": True,
+        "ic": "aic",
+        "fit_timeout_seconds": 3600,
+    }
+    return _params(model_type="autoarima", model_params={"autoarima": autoarima})
 
 
 @pytest.fixture(autouse=True)
@@ -121,3 +141,20 @@ def test_backtest_rows_match_raw_source(features, raw_volume):
     logger.info(
         "spot-check rows:\n%s", checked[["end_date", "y_true", "y_pred"]].to_string()
     )
+
+
+def test_crostonsba_reproduces_spike_mae(features):
+    params = _crostonsba_params()
+    X, y, dates = select_book_features(features, params)
+    metrics, _ = cross_validate(X, y, params, dates)
+    assert metrics["mae_mean"] == pytest.approx(165.041, abs=5e-4)
+    assert metrics["relative_mae"] == pytest.approx(0.985209, abs=1e-6)
+
+
+@pytest.mark.skipif(not RUN_SLOW, reason="set RUN_SLOW=1: five AutoARIMA fits, ~25 min")
+def test_autoarima_reproduces_spike_mae(features):
+    params = _autoarima_params()
+    X, y, dates = select_book_features(features, params)
+    metrics, _ = cross_validate(X, y, params, dates)
+    assert metrics["mae_mean"] == pytest.approx(145.3503, abs=5e-4)
+    assert metrics["relative_mae"] == pytest.approx(0.867666, abs=1e-6)
