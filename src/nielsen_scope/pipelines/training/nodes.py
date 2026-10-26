@@ -88,25 +88,35 @@ def select_book_features(
     return X, y, df['end_date']
 
 
-def cv_xgb(X: pd.DataFrame, y: pd.Series, params: dict) -> dict:
+def cross_validate(
+    X: pd.DataFrame,
+    y: pd.Series,
+    params: dict,
+    dates: pd.Series | None = None,
+) -> tuple[dict, pd.DataFrame]:
     """
-    TimeSeriesSplit cross validation with XGBoost.
-    Log-per fold and aggregate MAE/RMSE/MAPE to the active MLflow run. 
-    MAE is primary; MAPE is computed over non-zero actuals only
+    TimeSeriesSplit cross validation, model chosen by params['model_type'] via
+    models.get_model. Logs per-fold and aggregate MAE/RMSE/MAPE to the active
+    MLflow run. MAE is primary; MAPE is computed over non-zero actuals only.
+    Returns (metrics, predictions); predictions has one row per test week
+    (fold, end_date, y_true, y_pred); end_date is NaT when dates is None.
+    When params['min_lag'] is None the figure is one-step-ahead (A-055) and
+    mae_mean is also logged as one_step_mae.
     """
     cv = params['cv']
-    model_params = params['model_params'][params['model_type']]
+    model_type = params['model_type']
+    model_params = params['model_params'][model_type]
+    fit, predict = get_model(model_type)
     splitter = TimeSeriesSplit(n_splits=cv["n_splits"], test_size=cv["test_horizon"])
 
     #init the metrics and perform k fold CV
-    fold_mae, fold_rmse, fold_mape = [], [], []
+    fold_mae, fold_rmse, fold_mape, fold_preds = [], [], [], []
     for fold, (train_idx, test_idx) in enumerate(splitter.split(X)):
         X_tr, X_te = X.iloc[train_idx], X.iloc[test_idx]
         y_tr, y_te = y.iloc[train_idx], y.iloc[test_idx]
 
-        model = XGBRegressor(**model_params)
-        model.fit(X_tr, y_tr)
-        pred = model.predict(X_te)
+        model = fit(X_tr, y_tr, model_params)
+        pred = predict(model, X_te)
 
         #calc metrics
         mae = float(mean_absolute_error(y_te, pred))
@@ -121,6 +131,16 @@ def cv_xgb(X: pd.DataFrame, y: pd.Series, params: dict) -> dict:
         fold_mae.append(mae)
         fold_rmse.append(rmse)
         fold_mape.append(mape)
+        fold_preds.append(
+            pd.DataFrame(
+                {
+                    "fold": fold,
+                    "end_date": dates.iloc[test_idx].to_numpy() if dates is not None else pd.NaT,
+                    "y_true": actual,
+                    "y_pred": pred,
+                }
+            )
+        )
         mlflow.log_metric("fold_mae", mae, step=fold)
         mlflow.log_metric("fold_rmse", rmse, step=fold)
         mlflow.log_metric("fold_mape_excluded_rows", excluded, step=fold)
@@ -130,7 +150,7 @@ def cv_xgb(X: pd.DataFrame, y: pd.Series, params: dict) -> dict:
             "fold %d: MAE=%.3f RMSE=%.3f MAPE=%.4f (excluded %d zero-actual rows)",
             fold, mae, rmse, mape, excluded,
         )
-    
+
     metrics = {
         "mae_mean": float(np.mean(fold_mae)),
         "mae_std": float(np.std(fold_mae)),
@@ -141,9 +161,11 @@ def cv_xgb(X: pd.DataFrame, y: pd.Series, params: dict) -> dict:
         "n_folds": splitter.n_splits,
     }
     mlflow.log_metrics({k: v for k, v in metrics.items() if np.isfinite(v)})
+    if params.get("min_lag") is None:
+        mlflow.log_metric("one_step_mae", metrics["mae_mean"])
     logger.info("walk_forward aggregate: %s", metrics)
-    
-    return metrics
+
+    return metrics, pd.concat(fold_preds, ignore_index=True)
 
 
 def objective(trial, params: dict, X: pd.DataFrame, y: pd.Series, model_type: str) -> float:
