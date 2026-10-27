@@ -75,7 +75,7 @@ def test_catboost_same_seed_gives_same_predictions():
 def test_catboost_legacy_features_reproduce_spike_mae(features):
     params = _catboost_params()
     X, y, dates = select_book_features(features, params)
-    metrics, _ = cross_validate(X, y, params, dates)
+    metrics, _, _ = cross_validate(X, y, params, dates)
     assert metrics["mae_mean"] == pytest.approx(89.74814438, abs=5e-4)
     assert metrics["relative_mae"] == pytest.approx(0.535750, abs=1e-6)
 
@@ -84,6 +84,6 @@ def test_catboost_legacy_features_reproduce_spike_mae(features):
 def test_catboost_direct_features_reproduce_spike_mae(features):
     params = _catboost_params(min_lag=32, exclude_features=["year"])
     X, y, dates = select_book_features(features, params)
-    metrics, _ = cross_validate(X, y, params, dates)
+    metrics, _, _ = cross_validate(X, y, params, dates)
     assert metrics["mae_mean"] == pytest.approx(163.32127515, abs=5e-4)
     assert metrics["relative_mae"] == pytest.approx(0.974943, abs=1e-6)

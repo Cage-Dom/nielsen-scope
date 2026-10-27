@@ -60,11 +60,13 @@ def test_cross_validate_returns_finite_metrics_and_predictions(monkeypatch):
     monkeypatch.setattr(nodes.mlflow, "log_metric", lambda *a, **k: None)
     monkeypatch.setattr(nodes.mlflow, "log_metrics", lambda *a, **k: None)
     X, y, dates = select_book_features(_synthetic_features(), _params())
-    metrics, preds = cross_validate(X, y, _params(), dates)
+    metrics, preds, _ = cross_validate(X, y, _params(), dates)
     assert metrics["n_folds"] == 5
     assert np.isfinite(metrics["mae_mean"])
     assert np.isfinite(metrics["rmse_mean"])
-    assert list(preds.columns) == ["fold", "end_date", "y_true", "y_pred"]
+    assert list(preds.columns) == [
+        "fold", "end_date", "y_true", "y_pred", "lo_95", "hi_95",
+    ]
     assert len(preds) == 160 and preds["end_date"].is_unique
 
 
@@ -165,7 +167,7 @@ def test_predict_naive_returns_lag_52():
 def test_naive_relative_mae_is_one(monkeypatch):
     _silence_mlflow(monkeypatch)
     X, y, dates = select_book_features(_synthetic_features(), _naive_params())
-    metrics, preds = cross_validate(X, y, _naive_params(), dates)
+    metrics, preds, _ = cross_validate(X, y, _naive_params(), dates)
     assert metrics["relative_mae"] == pytest.approx(1.0)
     assert list(preds["y_pred"]) == list(X["volume_lag_52"].tail(len(preds)))
 
@@ -175,7 +177,7 @@ def test_mape_excluded_rows_counts_zero_actuals(monkeypatch):
     X, y, dates = select_book_features(_synthetic_features(), _naive_params())
     y = y.copy()
     y.iloc[-ZEROED_ROWS:] = 0
-    metrics, _ = cross_validate(X, y, _naive_params(), dates)
+    metrics, _, _ = cross_validate(X, y, _naive_params(), dates)
     assert metrics["mape_excluded_rows"] == ZEROED_ROWS
 
 
@@ -185,7 +187,7 @@ def test_relative_mae_is_nan_when_naive_is_perfect(monkeypatch):
     df["volume"] = 100
     df["volume_lag_52"] = 100.0
     X, y, dates = select_book_features(df, _naive_params())
-    metrics, _ = cross_validate(X, y, _naive_params(), dates)
+    metrics, _, _ = cross_validate(X, y, _naive_params(), dates)
     assert metrics["mae_mean"] == 0
     assert np.isnan(metrics["relative_mae"])
 
@@ -202,5 +204,5 @@ def test_relative_mae_is_nan_for_xgboost_without_lag_52(monkeypatch):
     _silence_mlflow(monkeypatch)
     params = _params() | {"exclude_features": ["volume_lag_52"]}
     X, y, dates = select_book_features(_synthetic_features(), params)
-    metrics, _ = cross_validate(X, y, params, dates)
+    metrics, _, _ = cross_validate(X, y, params, dates)
     assert np.isnan(metrics["relative_mae"])

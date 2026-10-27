@@ -164,6 +164,19 @@ def predict_statsforecast(model: FittedStatsForecast, X: pd.DataFrame) -> np.nda
     return forecast[model.column].to_numpy()
 
 
+INTERVAL_LEVEL = 95
+
+
+def predict_statsforecast_interval(
+    model: FittedStatsForecast, X: pd.DataFrame
+) -> tuple[np.ndarray, np.ndarray]:
+    """Lower and upper bounds of the INTERVAL_LEVEL% prediction interval."""
+    forecast = model.sf.predict(h=len(X), level=[INTERVAL_LEVEL])
+    lower = forecast[f"{model.column}-lo-{INTERVAL_LEVEL}"].to_numpy()
+    upper = forecast[f"{model.column}-hi-{INTERVAL_LEVEL}"].to_numpy()
+    return lower, upper
+
+
 MODELS: dict[str, tuple[Callable, Callable]] = {
     "xgboost": (fit_xgboost, predict_xgboost),
     "catboost": (fit_catboost, predict_catboost),
@@ -171,6 +184,16 @@ MODELS: dict[str, tuple[Callable, Callable]] = {
     "autoarima": (fit_autoarima, predict_statsforecast),
     "crostonsba": (fit_crostonsba, predict_statsforecast),
 }
+
+
+INTERVALS: dict[str, Callable] = {
+    "autoarima": predict_statsforecast_interval,
+}
+
+
+def get_interval_predictor(model_type: str) -> Callable | None:
+    """Return the interval function for model_type, or None if it has none."""
+    return INTERVALS.get(model_type)
 
 
 def get_model(model_type: str) -> tuple[Callable, Callable]:

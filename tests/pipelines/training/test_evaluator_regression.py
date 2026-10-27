@@ -88,7 +88,7 @@ def _silence_mlflow(monkeypatch):
 def test_legacy_features_reproduce_stage2_one_step_mae(features):
     params = _params()
     X, y, dates = select_book_features(features, params)
-    metrics, _ = cross_validate(X, y, params, dates)
+    metrics, _, _ = cross_validate(X, y, params, dates)
     assert metrics["mae_mean"] == pytest.approx(92.9642066955566, abs=1e-4)
 
 
@@ -98,14 +98,14 @@ def test_direct_features_reproduce_year_ablation_mae(features):
     assert list(X.columns) == [
         "volume_lag_52", "week_of_year", "month", "quarter", "rrp",
     ]
-    metrics, _ = cross_validate(X, y, params, dates)
+    metrics, _, _ = cross_validate(X, y, params, dates)
     assert metrics["mae_mean"] == pytest.approx(174.349, abs=5e-4)
 
 
 def test_naive_reproduces_planned_baseline_mae(features):
     params = _naive_params()
     X, y, dates = select_book_features(features, params)
-    metrics, _ = cross_validate(X, y, params, dates)
+    metrics, _, _ = cross_validate(X, y, params, dates)
     assert metrics["mae_mean"] == pytest.approx(167.519, abs=5e-4)
     assert metrics["relative_mae"] == pytest.approx(1.0)
     assert metrics["mape_excluded_rows"] == 0
@@ -114,14 +114,14 @@ def test_naive_reproduces_planned_baseline_mae(features):
 def test_naive_mae_is_unchanged_by_min_lag(features):
     params = _naive_params(min_lag=32, exclude_features=["year"])
     X, y, dates = select_book_features(features, params)
-    metrics, _ = cross_validate(X, y, params, dates)
+    metrics, _, _ = cross_validate(X, y, params, dates)
     assert metrics["mae_mean"] == pytest.approx(167.519, abs=5e-4)
 
 
 def test_xgboost_relative_mae_against_naive(features):
     params = _params()
     X, y, dates = select_book_features(features, params)
-    metrics, _ = cross_validate(X, y, params, dates)
+    metrics, _, _ = cross_validate(X, y, params, dates)
     assert metrics["relative_mae"] == pytest.approx(0.55495, abs=5e-5)
 
 
@@ -129,7 +129,7 @@ def test_xgboost_relative_mae_against_naive(features):
 def test_backtest_rows_match_raw_source(features, raw_volume):
     params = _naive_params()
     X, y, dates = select_book_features(features, params)
-    _, preds = cross_validate(X, y, params, dates)
+    _, preds, _ = cross_validate(X, y, params, dates)
     sample = preds[preds["y_true"] > 0].sample(n=N_SPOT_CHECKS, random_state=42)
     checked = pd.concat([sample, preds.iloc[[-1]]])
     # stored end_date is the Sunday after the raw Saturday week-end (A-005)
@@ -146,7 +146,7 @@ def test_backtest_rows_match_raw_source(features, raw_volume):
 def test_crostonsba_reproduces_spike_mae(features):
     params = _crostonsba_params()
     X, y, dates = select_book_features(features, params)
-    metrics, _ = cross_validate(X, y, params, dates)
+    metrics, _, _ = cross_validate(X, y, params, dates)
     assert metrics["mae_mean"] == pytest.approx(165.041, abs=5e-4)
     assert metrics["relative_mae"] == pytest.approx(0.985209, abs=1e-6)
 
@@ -155,6 +155,6 @@ def test_crostonsba_reproduces_spike_mae(features):
 def test_autoarima_reproduces_spike_mae(features):
     params = _autoarima_params()
     X, y, dates = select_book_features(features, params)
-    metrics, _ = cross_validate(X, y, params, dates)
+    metrics, _, _ = cross_validate(X, y, params, dates)
     assert metrics["mae_mean"] == pytest.approx(145.3503, abs=5e-4)
     assert metrics["relative_mae"] == pytest.approx(0.867666, abs=1e-6)
