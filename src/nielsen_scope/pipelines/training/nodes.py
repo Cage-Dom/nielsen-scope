@@ -13,7 +13,7 @@ from sklearn.metrics import (
 from sklearn.model_selection import TimeSeriesSplit
 from xgboost import XGBRegressor
 
-from .models import NAIVE_LAG_COLUMN, get_model, predict_naive
+from .models import NAIVE_LAG_COLUMN, get_interval_predictor, get_model, predict_naive
 
 logger = logging.getLogger(__name__)
 
@@ -87,12 +87,42 @@ def select_book_features(
     return X, y, df['end_date']
 
 
+def _score_fold(actual: np.ndarray, pred: np.ndarray) -> dict:
+    """MAE, RMSE, MAPE (non-zero actuals only) and the zero-actual row count of a fold."""
+    nz = actual != 0
+    mape = float("nan")
+    if nz.any():
+        mape = float(mean_absolute_percentage_error(actual[nz], pred[nz]))
+    return {
+        "mae": float(mean_absolute_error(actual, pred)),
+        "rmse": float(np.sqrt(mean_squared_error(actual, pred))),
+        "mape": mape,
+        "mape_excluded_rows": int((~nz).sum()),
+    }
+
+
+def _log_fold(row: dict) -> None:
+    """Log one fold's metrics to the active MLflow run and the module logger."""
+    fold = row["fold"]
+    mlflow.log_metric("fold_mae", row["mae"], step=fold)
+    mlflow.log_metric("fold_rmse", row["rmse"], step=fold)
+    mlflow.log_metric("fold_mape_excluded_rows", row["mape_excluded_rows"], step=fold)
+    if np.isfinite(row["mape"]):
+        mlflow.log_metric("fold_mape", row["mape"], step=fold)
+    if np.isfinite(row["rel_mae"]):
+        mlflow.log_metric("fold_relative_mae", row["rel_mae"], step=fold)
+    logger.info(
+        "fold %d: MAE=%.3f RMSE=%.3f MAPE=%.4f (excluded %d zero-actual rows)",
+        fold, row["mae"], row["rmse"], row["mape"], row["mape_excluded_rows"],
+    )
+
+
 def cross_validate(
     X: pd.DataFrame,
     y: pd.Series,
     params: dict,
     dates: pd.Series | None = None,
-) -> tuple[dict, pd.DataFrame]:
+) -> tuple[dict, pd.DataFrame, pd.DataFrame]:
     """
     TimeSeriesSplit cross validation, model chosen by params['model_type'] via
     models.get_model. Logs per-fold and aggregate MAE/RMSE/MAPE to the active
@@ -100,8 +130,11 @@ def cross_validate(
     mape_excluded_rows counts the zero-actual rows left out. relative_mae is
     mae_mean divided by the seasonal-naive mae (volume_lag_52 over the same folds);
     NaN when that column is not in X or the naive error is 0.
-    Returns (metrics, predictions); predictions has one row per test week
-    (fold, end_date, y_true, y_pred); end_date is NaT when dates is None.
+    Returns (metrics, predictions, fold_metrics). predictions has one row per test
+    week (fold, end_date, y_true, y_pred, lo_95, hi_95); end_date is NaT when dates is
+    None and lo_95/hi_95 are NaN for models without an interval function.
+    fold_metrics has one row per fold (fold, mae, rmse, mape, mape_excluded_rows,
+    naive_mae, rel_mae, fell_back); fell_back is <NA> for models that cannot fall back.
     When params['min_lag'] is None the figure is one-step-ahead (A-055) and
     mae_mean is also logged as one_step_mae.
     """
@@ -109,33 +142,35 @@ def cross_validate(
     model_type = params['model_type']
     model_params = params['model_params'].get(model_type, {})
     fit, predict = get_model(model_type)
+    interval_predict = get_interval_predictor(model_type)
     splitter = TimeSeriesSplit(n_splits=cv["n_splits"], test_size=cv["test_horizon"])
     has_naive_ref = NAIVE_LAG_COLUMN in X.columns
 
-    #init the metrics and perform k fold CV
-    fold_mae, fold_rmse, fold_mape, fold_naive_mae, fold_preds = [], [], [], [], []
-    total_excluded = 0
+    #perform k fold CV
+    fold_rows, fold_preds = [], []
     for fold, (train_idx, test_idx) in enumerate(splitter.split(X)):
         X_tr, X_te = X.iloc[train_idx], X.iloc[test_idx]
         y_tr, y_te = y.iloc[train_idx], y.iloc[test_idx]
 
         model = fit(X_tr, y_tr, model_params)
         pred = predict(model, X_te)
+        if interval_predict is None:
+            lower = upper = np.full(len(pred), np.nan)
+        else:
+            lower, upper = interval_predict(model, X_te)
 
-        #calc metrics
-        mae = float(mean_absolute_error(y_te, pred))
-        rmse = float(np.sqrt(mean_squared_error(y_te, pred)))
-        #conv to array
+        #score the fold against the actuals and the seasonal naive
         actual = y_te.to_numpy()
-        nz = actual != 0
-        excluded = int((~nz).sum())
-        total_excluded += excluded
-        mape = float(mean_absolute_percentage_error(actual[nz], pred[nz])) if nz.any() else float("nan")
-
-        #update metrics for fold
-        fold_mae.append(mae)
-        fold_rmse.append(rmse)
-        fold_mape.append(mape)
+        naive_mae = float("nan")
+        if has_naive_ref:
+            naive_mae = float(mean_absolute_error(actual, predict_naive(None, X_te)))
+        scores = _score_fold(actual, pred)
+        row = {"fold": fold} | scores | {
+            "naive_mae": naive_mae,
+            "rel_mae": scores["mae"] / naive_mae if naive_mae > 0 else float("nan"),
+            "fell_back": getattr(model, "fell_back", None),
+        }
+        fold_rows.append(row)
         fold_preds.append(
             pd.DataFrame(
                 {
@@ -143,23 +178,19 @@ def cross_validate(
                     "end_date": dates.iloc[test_idx].to_numpy() if dates is not None else pd.NaT,
                     "y_true": actual,
                     "y_pred": pred,
+                    "lo_95": lower,
+                    "hi_95": upper,
                 }
             )
         )
-        mlflow.log_metric("fold_mae", mae, step=fold)
-        mlflow.log_metric("fold_rmse", rmse, step=fold)
-        mlflow.log_metric("fold_mape_excluded_rows", excluded, step=fold)
-        if np.isfinite(mape):
-            mlflow.log_metric("fold_mape", mape, step=fold)
-        if has_naive_ref:
-            naive_mae = float(mean_absolute_error(y_te, predict_naive(None, X_te)))
-            fold_naive_mae.append(naive_mae)
-            if naive_mae > 0:
-                mlflow.log_metric("fold_relative_mae", mae / naive_mae, step=fold)
-        logger.info(
-            "fold %d: MAE=%.3f RMSE=%.3f MAPE=%.4f (excluded %d zero-actual rows)",
-            fold, mae, rmse, mape, excluded,
-        )
+        _log_fold(row)
+
+    fold_metrics = pd.DataFrame(fold_rows)
+    fold_metrics["fell_back"] = fold_metrics["fell_back"].astype("boolean")
+    fold_mae = fold_metrics["mae"].to_numpy()
+    fold_rmse = fold_metrics["rmse"].to_numpy()
+    fold_mape = fold_metrics["mape"].to_numpy()
+    fold_naive_mae = fold_metrics["naive_mae"].to_numpy()
 
     mae_mean = float(np.mean(fold_mae))
     relative_mae = float("nan")
@@ -178,7 +209,7 @@ def cross_validate(
         "mape_mean": float(np.nanmean(fold_mape)),
         "mape_std": float(np.nanstd(fold_mape)),
         "relative_mae": relative_mae,
-        "mape_excluded_rows": total_excluded,
+        "mape_excluded_rows": int(fold_metrics["mape_excluded_rows"].sum()),
         "n_folds": splitter.n_splits,
     }
     mlflow.log_metrics({k: v for k, v in metrics.items() if np.isfinite(v)})
@@ -186,7 +217,7 @@ def cross_validate(
         mlflow.log_metric("one_step_mae", metrics["mae_mean"])
     logger.info("walk_forward aggregate: %s", metrics)
 
-    return metrics, pd.concat(fold_preds, ignore_index=True)
+    return metrics, pd.concat(fold_preds, ignore_index=True), fold_metrics
 
 
 def objective(trial, params: dict, X: pd.DataFrame, y: pd.Series, model_type: str) -> float:
@@ -223,7 +254,7 @@ def objective(trial, params: dict, X: pd.DataFrame, y: pd.Series, model_type: st
         }
     }
 
-    metrics, _ = cross_validate(X, y, trial_params)
+    metrics, _, _ = cross_validate(X, y, trial_params)
     return metrics["mae_mean"]
 
 def optuna_hyperparam_tune_xgb(X: pd.DataFrame, y: pd.Series, params: dict) -> dict:
@@ -262,4 +293,3 @@ def train_final_xgb_model(X: pd.DataFrame, y: pd.Series, params: dict) -> XGBReg
         params["model_type"], len(X), X.shape[1],
     )
     return model
-
