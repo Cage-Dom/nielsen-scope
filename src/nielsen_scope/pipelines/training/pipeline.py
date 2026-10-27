@@ -1,6 +1,7 @@
 from kedro.pipeline import Pipeline, node
 
 from .nodes import cross_validate, select_book_features, train_final_xgb_model
+from .persist import write_forecasts, write_model_metrics
 
 
 def create_pipeline(**kwargs) -> Pipeline:
@@ -16,6 +17,24 @@ def create_pipeline(**kwargs) -> Pipeline:
             inputs=["book_X", "book_y", "params:training", "book_dates"],
             outputs=["training_metrics", "cv_predictions"],
             name="walk_forward_evaluate_xgb_node",
+        ),
+        node(
+            func=write_forecasts,
+            inputs=["cv_predictions", "params:training", "params:postgres_connection"],
+            outputs="forecasts_written",
+            name="write_forecasts_node",
+        ),
+        node(
+            func=write_model_metrics,
+            inputs=[
+                "training_metrics",
+                "cv_fold_metrics",
+                "params:training",
+                "params:postgres_connection",
+                "forecasts_written",
+            ],
+            outputs="model_metrics_written",
+            name="write_model_metrics_node",
         ),
         node(
             func=train_final_xgb_model,
