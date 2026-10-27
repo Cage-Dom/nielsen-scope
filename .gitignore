@@ -49,4 +49,4 @@ mlartifacts/
 .viz/
 
 # Pytest coverage output file
-.coverage
+.coverage.*
