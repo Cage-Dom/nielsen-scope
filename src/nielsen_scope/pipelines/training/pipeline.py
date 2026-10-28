@@ -16,7 +16,7 @@ def create_pipeline(**kwargs) -> Pipeline:
             func=cross_validate,
             inputs=["book_X", "book_y", "params:training", "book_dates"],
             outputs=["training_metrics", "cv_predictions", "cv_fold_metrics"],
-            name="walk_forward_evaluate_xgb_node",
+            name="walk_forward_evaluate_node",
         ),
         node(
             func=write_forecasts,
