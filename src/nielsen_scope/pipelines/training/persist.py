@@ -119,6 +119,17 @@ def build_metric_rows(
     return out
 
 
+def ensure_book_exists(conn: Connection, isbn: str) -> None:
+    """Raise unless isbn is in books.
+
+    forecasts and model_metrics have no foreign key to books (a full ingestion
+    truncates books with CASCADE, which would empty them), so this is the check.
+    """
+    found = conn.execute(text("SELECT 1 FROM books WHERE isbn = :isbn"), {"isbn": isbn}).first()
+    if found is None:
+        raise ValueError(f"ISBN {isbn} is not in the books table: nothing was written")
+
+
 def replace_rows(conn: Connection, table: str, rows: pd.DataFrame) -> None:
     """Delete this (isbn, model_type, run_id)'s rows from table, then insert rows.
 
@@ -143,6 +154,7 @@ def write_forecasts(
     engine = create_engine(connection_string)
     try:
         with engine.begin() as conn:
+            ensure_book_exists(conn, rows["isbn"].iloc[0])
             replace_rows(conn, "forecasts", rows)
     finally:
         engine.dispose()
@@ -162,6 +174,7 @@ def write_model_metrics(
     engine = create_engine(connection_string)
     try:
         with engine.begin() as conn:
+            ensure_book_exists(conn, rows["isbn"].iloc[0])
             replace_rows(conn, "model_metrics", rows)
     finally:
         engine.dispose()

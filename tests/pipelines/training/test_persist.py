@@ -1,20 +1,26 @@
 import os
 import uuid
 from pathlib import Path
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
 import pytest
+import yaml
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError, OperationalError
 
+from nielsen_scope.pipelines.ingestion.nodes import truncate_tables
 from nielsen_scope.pipelines.training import persist
 from nielsen_scope.pipelines.training.persist import (
     build_forecast_rows,
     build_metric_rows,
     current_run_id,
+    ensure_book_exists,
     replace_rows,
+    write_forecasts,
+    write_model_metrics,
 )
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -29,8 +35,7 @@ N_FOLD_METRICS = 5
 N_AGGREGATES = 8
 N_METRIC_ROWS = N_FOLDS * N_FOLD_METRICS + N_AGGREGATES + 1
 FALLBACK_FOLD = 2
-# the statement ingestion.nodes.truncate_tables runs on every full load
-INGESTION_TRUNCATE = "TRUNCATE TABLE sales, books, categories RESTART IDENTITY CASCADE"
+MIN_LAG_SET = 32
 
 
 def _params(**overrides) -> dict:
@@ -42,13 +47,14 @@ def _params(**overrides) -> dict:
     } | overrides
 
 
-def _predictions() -> pd.DataFrame:
-    dates = pd.date_range("2024-01-07", periods=N_FORECAST_ROWS, freq="W")
-    y_true = np.arange(N_FORECAST_ROWS)
+def _predictions(n_folds: int = N_FOLDS) -> pd.DataFrame:
+    n_rows = n_folds * HORIZON
+    dates = pd.date_range("2024-01-07", periods=n_rows, freq="W")
+    y_true = np.arange(n_rows)
     y_true[0] = -1  # a negative actual is accepted on purpose (A-070)
     return pd.DataFrame(
         {
-            "fold": np.repeat(np.arange(N_FOLDS), HORIZON),
+            "fold": np.repeat(np.arange(n_folds), HORIZON),
             "end_date": dates,
             "y_true": y_true,
             "y_pred": y_true + 0.5,
@@ -58,17 +64,17 @@ def _predictions() -> pd.DataFrame:
     )
 
 
-def _fold_metrics(flags=None) -> pd.DataFrame:
-    flags = [pd.NA] * N_FOLDS if flags is None else flags
+def _fold_metrics(flags=None, n_folds: int = N_FOLDS) -> pd.DataFrame:
+    flags = [pd.NA] * n_folds if flags is None else flags
     return pd.DataFrame(
         {
-            "fold": range(N_FOLDS),
-            "mae": [10.0 + i for i in range(N_FOLDS)],
-            "rmse": [12.0 + i for i in range(N_FOLDS)],
-            "mape": [0.5] * N_FOLDS,
-            "mape_excluded_rows": [0] * N_FOLDS,
-            "naive_mae": [20.0] * N_FOLDS,
-            "rel_mae": [0.5 + 0.1 * i for i in range(N_FOLDS)],
+            "fold": range(n_folds),
+            "mae": [10.0 + i for i in range(n_folds)],
+            "rmse": [12.0 + i for i in range(n_folds)],
+            "mape": [0.5] * n_folds,
+            "mape_excluded_rows": [0] * n_folds,
+            "naive_mae": [20.0] * n_folds,
+            "rel_mae": [0.5 + 0.1 * i for i in range(n_folds)],
             "fell_back": pd.array(flags, dtype="boolean"),
         }
     )
@@ -132,6 +138,24 @@ def test_metric_rows_skip_one_step_mae_when_min_lag_is_set():
     assert "one_step_mae" not in set(rows["metric"])
 
 
+@pytest.mark.parametrize("n_folds", [3, N_FOLDS])
+@pytest.mark.parametrize("min_lag", [None, MIN_LAG_SET])
+@pytest.mark.parametrize("model_type", ["naive", "xgboost", "autoarima"])
+def test_row_counts_follow_folds_and_min_lag_not_the_model(model_type, min_lag, n_folds):
+    params = _params(
+        model_type=model_type,
+        min_lag=min_lag,
+        cv={"n_splits": n_folds, "test_horizon": HORIZON},
+    )
+    forecasts = build_forecast_rows(_predictions(n_folds), params, RUN_A)
+    metrics = build_metric_rows(
+        _metrics(), _fold_metrics(n_folds=n_folds), params, RUN_A
+    )
+    one_step = 1 if min_lag is None else 0
+    assert len(forecasts) == n_folds * HORIZON
+    assert len(metrics) == n_folds * N_FOLD_METRICS + N_AGGREGATES + one_step
+
+
 def test_metric_rows_keep_an_undefined_metric_as_a_null_value():
     rows = build_metric_rows(
         _metrics(relative_mae=float("nan")), _fold_metrics(), _params(), RUN_A
@@ -184,7 +208,8 @@ def db():
     except OperationalError:
         admin.dispose()
         pytest.skip("postgres not reachable")
-    engine = create_engine(url, connect_args={"options": f"-csearch_path={schema}"})
+    scoped = make_url(url).update_query_dict({"options": f"-csearch_path={schema}"})
+    engine = create_engine(scoped)
     with engine.begin() as conn:
         for statement in SCHEMA_SQL.read_text().split(";"):
             if statement.strip():
@@ -211,6 +236,127 @@ def _write_metrics(engine, run_id: str, flags=None) -> None:
     rows = build_metric_rows(_metrics(), _fold_metrics(flags), _params(), run_id)
     with engine.begin() as conn:
         replace_rows(conn, "model_metrics", rows)
+
+
+def _project_db_url() -> str | None:
+    local = ROOT / "conf/local/parameters.yml"
+    if not local.exists():
+        return None
+    return yaml.safe_load(local.read_text()).get("postgres_connection")
+
+
+@pytest.fixture
+def project_db_readonly():
+    """The project database through a read-only connection: for reading real data only."""
+    url = _project_db_url()
+    if not url:
+        pytest.skip("no project database url in conf/local/parameters.yml")
+    engine = create_engine(
+        url, connect_args={"options": "-c default_transaction_read_only=on"}
+    )
+    try:
+        with engine.connect() as conn:
+            read_only = conn.execute(text("SHOW transaction_read_only")).scalar_one()
+    except OperationalError:
+        engine.dispose()
+        pytest.skip("project postgres not reachable")
+    if read_only != "on":
+        engine.dispose()
+        pytest.fail("the project connection is not read-only: refusing to use it")
+    yield engine
+    engine.dispose()
+
+
+def test_ensure_book_exists_finds_a_real_book_in_the_project_database(project_db_readonly):
+    with project_db_readonly.connect() as conn:
+        ensure_book_exists(conn, ISBN)
+        with pytest.raises(ValueError, match="not in the books table"):
+            ensure_book_exists(conn, "0000000000000")
+
+
+def test_project_history_tables_have_no_foreign_keys(project_db_readonly):
+    """The live database, read only: a foreign key added by hand would make ingestion wipe history."""
+    with project_db_readonly.connect() as conn:
+        tables = conn.execute(
+            text("SELECT to_regclass('forecasts') IS NOT NULL AND to_regclass('model_metrics') IS NOT NULL")
+        ).scalar_one()
+        if not tables:
+            pytest.skip("forecasts and model_metrics do not exist yet (run create_schema_node)")
+        constraints = conn.execute(
+            text(
+                "SELECT conrelid::regclass::text FROM pg_constraint "
+                "WHERE contype = 'f' AND conrelid IN ('forecasts'::regclass, 'model_metrics'::regclass)"
+            )
+        ).all()
+    assert constraints == []
+
+
+def _connection_string(engine) -> str:
+    return engine.url.render_as_string(hide_password=False)
+
+
+def _add_book(engine) -> None:
+    with engine.begin() as conn:
+        conn.execute(
+            text("INSERT INTO categories (category, category_name) VALUES ('F', 'Adult Fiction')")
+        )
+        conn.execute(
+            text("INSERT INTO books (isbn, title, category) VALUES (:isbn, 'The Alchemist', 'F')"),
+            {"isbn": ISBN},
+        )
+
+
+def _fake_run(monkeypatch, run_id: str = RUN_A) -> None:
+    run = SimpleNamespace(info=SimpleNamespace(run_id=run_id))
+    monkeypatch.setattr(persist.mlflow, "active_run", lambda: run)
+
+
+def test_ensure_book_exists_rejects_an_unknown_isbn(db):
+    with pytest.raises(ValueError, match="not in the books table"), db.begin() as conn:
+        ensure_book_exists(conn, ISBN)
+
+
+def test_ensure_book_exists_accepts_a_loaded_isbn(db):
+    _add_book(db)
+    with db.begin() as conn:
+        ensure_book_exists(conn, ISBN)
+
+
+def test_write_nodes_store_the_run_for_a_known_isbn(db, monkeypatch):
+    _add_book(db)
+    _fake_run(monkeypatch)
+    connection_string = _connection_string(db)
+    assert write_forecasts(_predictions(), _params(), connection_string) == "forecasts_written"
+    assert (
+        write_model_metrics(_metrics(), _fold_metrics(), _params(), connection_string, "x")
+        == "model_metrics_written"
+    )
+    assert _count(db, "forecasts") == N_FORECAST_ROWS
+    assert _count(db, "model_metrics") == N_METRIC_ROWS
+
+
+def test_write_nodes_reject_an_unknown_isbn_and_write_nothing(db, monkeypatch):
+    _fake_run(monkeypatch)
+    connection_string = _connection_string(db)
+    with pytest.raises(ValueError, match="not in the books table"):
+        write_forecasts(_predictions(), _params(), connection_string)
+    with pytest.raises(ValueError, match="not in the books table"):
+        write_model_metrics(_metrics(), _fold_metrics(), _params(), connection_string, "x")
+    assert _count(db, "forecasts") == 0
+    assert _count(db, "model_metrics") == 0
+
+
+def test_history_tables_have_no_foreign_keys(db):
+    """A foreign key to books would make ingestion's TRUNCATE ... CASCADE empty them."""
+    with db.connect() as conn:
+        constraints = conn.execute(
+            text(
+                "SELECT c.relname FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid "
+                "WHERE k.contype = 'f' AND c.relname IN ('forecasts', 'model_metrics') "
+                "AND c.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = current_schema())"
+            )
+        ).all()
+    assert constraints == []
 
 
 def test_rewriting_the_same_run_keeps_row_counts(db):
@@ -328,9 +474,10 @@ def test_database_rejects_an_unknown_metric(db):
 
 
 def test_history_survives_the_ingestion_truncate(db):
+    _add_book(db)
     _write_forecasts(db, RUN_A)
     _write_metrics(db, RUN_A)
-    with db.begin() as conn:
-        conn.execute(text(INGESTION_TRUNCATE))
+    assert truncate_tables(_connection_string(db), "schema_ready") == "tables_truncated"
+    assert _count(db, "books") == 0
     assert _count(db, "forecasts") == N_FORECAST_ROWS
     assert _count(db, "model_metrics") == N_METRIC_ROWS
