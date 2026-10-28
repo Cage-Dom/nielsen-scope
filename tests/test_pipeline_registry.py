@@ -8,8 +8,10 @@ from nielsen_scope.pipelines.ingestion.pipeline import (
 from nielsen_scope.pipelines.training.pipeline import (
     create_pipeline as training_pipeline,
 )
+from nielsen_scope.pipelines.training.pipeline import instance_pipeline, load_grid
 
-TRAINING_PERSIST_NODES = [
+INSTANCE_NODES = [
+    "bind_run_params_node",
     "select_book_features_node",
     "walk_forward_evaluate_node",
     "write_forecasts_node",
@@ -42,6 +44,24 @@ def test_default_pipeline_leaves_out_ingestion():
     assert set(_names(_pipelines()["feature_engineering"])) <= set(names)
 
 
-def test_persisting_the_evaluation_runs_four_nodes_and_no_registration():
-    names = _names(training_pipeline().to_nodes("write_model_metrics_node"))
-    assert sorted(names) == sorted(TRAINING_PERSIST_NODES)
+def test_instance_pipeline_is_namespaced_and_registers_no_model():
+    pipe = instance_pipeline("9780722532935", "xgboost")
+    namespace = "9780722532935.xgboost"
+    assert sorted(_names(pipe)) == sorted(f"{namespace}.{name}" for name in INSTANCE_NODES)
+    assert not any("book_xgb_model" in output for output in pipe.outputs())
+    assert not any("train_final" in name for name in _names(pipe))
+
+
+def test_instances_share_the_feature_table_and_the_shared_params():
+    pipe = instance_pipeline("9780722532935", "naive")
+    assert pipe.inputs() == {"feature_table", "params:training", "params:postgres_connection"}
+
+
+def test_training_pipeline_has_one_instance_per_isbn_and_model():
+    grid = load_grid()
+    expected = len(grid["isbns"]) * len(grid["models"]) * len(INSTANCE_NODES)
+    assert len(training_pipeline().nodes) == expected
+    one = training_pipeline().only_nodes_with_namespaces(
+        [f"{grid['isbns'][0]}.{grid['models'][0]}"]
+    )
+    assert len(one.nodes) == len(INSTANCE_NODES)

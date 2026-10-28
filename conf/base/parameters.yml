@@ -83,3 +83,8 @@ hyperparam_tuning:
       upper: 0.2
       lower: 0.05
  
+training_grid:
+  isbns:
+    - "9780722532935"
+    - "9780241003008"
+  models: [naive, xgboost, catboost, crostonsba]

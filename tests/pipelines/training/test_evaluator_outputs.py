@@ -89,3 +89,11 @@ def test_autoarima_fallback_is_reported_per_fold():
     _, preds, fold_metrics = _run("autoarima", AUTOARIMA | {"fit_timeout_seconds": 0.01})
     assert fold_metrics["fell_back"].all()
     assert np.isfinite(preds[["lo_95", "hi_95"]].to_numpy()).all()
+
+def test_cross_validate_prefixes_every_mlflow_metric_key(monkeypatch):
+    logged = []
+    monkeypatch.setattr(nodes.mlflow, "log_metric", lambda key, *a, **k: logged.append(key))
+    monkeypatch.setattr(nodes.mlflow, "log_metrics", lambda metrics, *a, **k: logged.extend(metrics))
+    _run("xgboost", {"n_estimators": 20, "random_state": 42})
+    assert logged
+    assert all(key.startswith(f"{ISBN}.xgboost.") for key in logged)

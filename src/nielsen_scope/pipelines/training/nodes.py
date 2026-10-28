@@ -101,20 +101,20 @@ def _score_fold(actual: np.ndarray, pred: np.ndarray) -> dict:
     }
 
 
-def _log_fold(row: dict) -> None:
-    """Log one fold's metrics to the active MLflow run and the module logger."""
+def _log_fold(row: dict, prefix: str) -> None:
+    """Log one fold's metrics to the active MLflow run and the module logger.
+
+    prefix is "<isbn>.<model_type>." so that books and models sharing one MLflow
+    run keep separate metric keys.
+    """
     fold = row["fold"]
-    mlflow.log_metric("fold_mae", row["mae"], step=fold)
-    mlflow.log_metric("fold_rmse", row["rmse"], step=fold)
-    mlflow.log_metric("fold_mape_excluded_rows", row["mape_excluded_rows"], step=fold)
+    mlflow.log_metric(f"{prefix}fold_mae", row["mae"], step=fold)
+    mlflow.log_metric(f"{prefix}fold_rmse", row["rmse"], step=fold)
+    mlflow.log_metric(f"{prefix}fold_mape_excluded_rows", row["mape_excluded_rows"], step=fold)
     if np.isfinite(row["mape"]):
-        mlflow.log_metric("fold_mape", row["mape"], step=fold)
+        mlflow.log_metric(f"{prefix}fold_mape", row["mape"], step=fold)
     if np.isfinite(row["rel_mae"]):
-        mlflow.log_metric("fold_relative_mae", row["rel_mae"], step=fold)
-    logger.info(
-        "fold %d: MAE=%.3f RMSE=%.3f MAPE=%.4f (excluded %d zero-actual rows)",
-        fold, row["mae"], row["rmse"], row["mape"], row["mape_excluded_rows"],
-    )
+        mlflow.log_metric(f"{prefix}fold_relative_mae", row["rel_mae"], step=fold)
 
 
 def cross_validate(
@@ -140,6 +140,7 @@ def cross_validate(
     """
     cv = params['cv']
     model_type = params['model_type']
+    prefix = f"{params['isbn']}.{model_type}."
     model_params = params['model_params'].get(model_type, {})
     fit, predict = get_model(model_type)
     interval_predict = get_interval_predictor(model_type)
@@ -183,7 +184,7 @@ def cross_validate(
                 }
             )
         )
-        _log_fold(row)
+        _log_fold(row, prefix)
 
     fold_metrics = pd.DataFrame(fold_rows)
     fold_metrics["fell_back"] = fold_metrics["fell_back"].astype("boolean")
@@ -212,9 +213,9 @@ def cross_validate(
         "mape_excluded_rows": int(fold_metrics["mape_excluded_rows"].sum()),
         "n_folds": splitter.n_splits,
     }
-    mlflow.log_metrics({k: v for k, v in metrics.items() if np.isfinite(v)})
+    mlflow.log_metrics({f"{prefix}{k}": v for k, v in metrics.items() if np.isfinite(v)})
     if params.get("min_lag") is None:
-        mlflow.log_metric("one_step_mae", metrics["mae_mean"])
+        mlflow.log_metric(f"{prefix}one_step_mae", metrics["mae_mean"])
     logger.info("walk_forward aggregate: %s", metrics)
 
     return metrics, pd.concat(fold_preds, ignore_index=True), fold_metrics
