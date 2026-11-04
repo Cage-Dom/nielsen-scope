@@ -1,45 +1,38 @@
-from pathlib import Path
-from sqlalchemy import create_engine, text
-import pandas as pd
 import logging
+from pathlib import Path
+
+import pandas as pd
+from sqlalchemy import create_engine, text
+from sqlalchemy.engine import Connection
+
+from nielsen_scope.db import db_url
 
 logger = logging.getLogger(__name__)
 
-def create_schema(connection_string: str) -> None:
-    """
-    Create the PostgreSQL schema if it does not already exist.
-    """
-    #Locate schema.sql
-    schema_path = (
-        Path(__file__).parents[2]
-        / "sql"
-        / "schema.sql"
-    )
 
+def create_schema() -> str:
+    """Create the PostgreSQL schema if it does not already exist."""
+    schema_path = Path(__file__).parents[2] / "sql" / "schema.sql"
     if not schema_path.exists():
-        raise FileNotFoundError(
-            f"Schema file not found: {schema_path}"
-        )
+        raise FileNotFoundError(f"Schema file not found: {schema_path}")
+    sql = schema_path.read_text()
 
-    #Read SQL file
-    with open(schema_path, "r") as f:
-        sql = f.read()
-
-    #Connect to PostgreSQL
-    print("Connecting to PostgreSQL")
-    engine = create_engine(connection_string)
-
-    #Execute each SQL statement
-    with engine.begin() as conn:
-        for statement in sql.split(";"):
-            statement = statement.strip()
-            if statement:
-                conn.execute(text(statement))
-
-    print("Schema created successfully.")
+    engine = create_engine(db_url())
+    try:
+        with engine.begin() as conn:
+            # schema.sql holds CREATE statements only, with no ';' in comments or
+            # literals (pinned by test_schema_sql_splits_into_create_statements_only)
+            for statement in sql.split(";"):
+                statement = statement.strip()
+                if statement:
+                    conn.execute(text(statement))
+    finally:
+        engine.dispose()
+    logger.info("create_schema: applied %s", schema_path.name)
     return "schema_ready"
 
-def _convert_fieldnames(df = pd.DataFrame) -> pd.DataFrame:
+
+def _convert_fieldnames(df: pd.DataFrame) -> pd.DataFrame:
     """Convert all spaces in column names from input excel into snake case"""
     df.columns = df.columns.str.strip().str.replace(' ', '_')
     return df
@@ -69,12 +62,12 @@ def _read_excel_concat(sheets: dict) -> pd.DataFrame:
         #rename for mapping later and trim so just the letter identifier
         df = df.rename(columns={'sheet_name': 'category'})
         df['category'] = df['category'].apply(lambda x: x[0])
-        print("Excel file read successfully.")
+        logger.info("Excel file read successfully.")
 
         return df
 
     except Exception as e:
-        print(f"Error loading excel dataset: {e}")
+        logger.error(f"Error loading excel dataset: {e}")
         raise
 
 def ingest_sales_data(sheets: dict) -> pd.DataFrame:
@@ -143,44 +136,63 @@ def ingest_isbn_static(sheets: dict) -> pd.DataFrame:
     df = _convert_fieldnames(df)
 
     dim_cols = [
-        "ISBN", "Title", "Author", "Imprint", "Publisher_Group",
-        "RRP", "Binding", "Publication_Date", "Product_Class", "category"
+        "ISBN", "Title", "Author", "Imprint", "Publisher_Group", "RRP", "Binding",
+        "Publication_Date", "Country_of_Publication", "Product_Class", "category"
     ]
     df = df[dim_cols].drop_duplicates(subset="ISBN", keep="last")
     return df
 
-def load_sales(df_fact_sales: pd.DataFrame, connection_string: str,
-                sales_mapping_dictionary: dict, _books_loaded: str) -> None:
-    """Load the sales fact data into sql table."""
-    df = df_fact_sales.rename(columns=sales_mapping_dictionary)
-    df = df.drop(columns=["sheet_name", "category"], errors="ignore")
-    engine = create_engine(connection_string)
-    df.to_sql("sales", engine, if_exists="append", index=False)
-    return "sales_loaded"
+def truncate_tables(conn: Connection) -> None:
+    """Empty sales, books and categories inside the caller's transaction."""
+    conn.execute(text("TRUNCATE TABLE sales, books, categories RESTART IDENTITY CASCADE"))
 
-def load_books(df_isbn: pd.DataFrame, connection_string: str,
-                isbn_mapping_dictionary: dict, _categories_loaded: str) -> str:
-    """Load the isbn static/dimension data into sql table."""
-    df = df_isbn.rename(columns=isbn_mapping_dictionary)
-    engine = create_engine(connection_string)
-    df.to_sql("books", engine, if_exists="append", index=False)
-    return "books_loaded"
 
-def load_categories(sheet_name_mappings: dict, connection_string: str, 
-                    _tables_truncated: str) -> str:
+def load_categories(conn: Connection, sheet_name_mappings: dict) -> None:
     df = pd.DataFrame(
         [{"category": k, "category_name": v} for k, v in sheet_name_mappings.items()]
     )
-    engine = create_engine(connection_string)
-    df.to_sql("categories", engine, if_exists="append", index=False)
-    return "categories_loaded"
+    df.to_sql("categories", conn, if_exists="append", index=False)
 
-def truncate_tables(connection_string: str, _schema_ready: str) -> str:
-    """Empty the tables, keeping constraints, so a full load is idempotent."""
-    engine = create_engine(connection_string)
-    with engine.begin() as conn:
-        conn.execute(text("TRUNCATE TABLE sales, books, categories RESTART IDENTITY CASCADE"))
-    return "tables_truncated"
+
+def load_books(conn: Connection, df_isbn: pd.DataFrame, isbn_mapping_dictionary: dict) -> None:
+    """Load the isbn static/dimension data into the books table."""
+    df = df_isbn.rename(columns=isbn_mapping_dictionary)
+    df.to_sql("books", conn, if_exists="append", index=False)
+
+
+def load_sales(
+    conn: Connection, df_fact_sales: pd.DataFrame, sales_mapping_dictionary: dict
+) -> None:
+    """Load the sales fact data into the sales table."""
+    df = df_fact_sales.rename(columns=sales_mapping_dictionary)
+    df = df.drop(columns=["sheet_name", "category"], errors="ignore")
+    df.to_sql("sales", conn, if_exists="append", index=False)
+
+
+def reload_tables(
+    isbn_dim: pd.DataFrame,
+    sales_filled: pd.DataFrame,
+    sheet_name_mappings: dict,
+    isbn_field_mappings: dict,
+    sales_field_mappings: dict,
+    _schema_ready: str,
+) -> str:
+    """Truncate and reload categories, books and sales in one transaction.
+
+    TRUNCATE is transactional in PostgreSQL, so a failed load rolls back to the
+    previous contents instead of leaving sales empty and books full.
+    """
+    engine = create_engine(db_url())
+    try:
+        with engine.begin() as conn:
+            truncate_tables(conn)
+            load_categories(conn, sheet_name_mappings)
+            load_books(conn, isbn_dim, isbn_field_mappings)
+            load_sales(conn, sales_filled, sales_field_mappings)
+    finally:
+        engine.dispose()
+    logger.info("reload_tables: %d books, %d sales rows", len(isbn_dim), len(sales_filled))
+    return "tables_reloaded"
 
 
 
