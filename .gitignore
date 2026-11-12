@@ -39,6 +39,7 @@ data/08_reporting/*
 PLAN.md
 IMPLEMENTATION-LOG.md
 assumptions.md
+Azure-SPEC.md
 
 # MLflow local tracking
 mlflow.db
@@ -50,3 +51,4 @@ mlartifacts/
 
 # Pytest coverage output file
 .coverage.*
+.coverage

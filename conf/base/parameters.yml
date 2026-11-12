@@ -37,9 +37,7 @@ sheet_name_mappings: {
 }
 
 training:
-  isbn: "9780722532935"
   model_start_date: "2012-01-01"
-  model_type: xgboost
   min_lag: 32
   exclude_features: [year]
   cv:
@@ -70,7 +68,6 @@ training:
 hyperparam_tuning:
   optuna:
     n_trials: 100
-    n_warmup_steps: 5
     direction: "minimize"
   xgboost:
     n_estimators:
@@ -86,5 +83,13 @@ hyperparam_tuning:
 training_grid:
   isbns:
     - "9780722532935"
+    - "9780006550433"
+    - "9780099286387"
+    - "9780091816971"
+    - "9780140275421"
+    - "9780340696767"
     - "9780241003008"
+    - "9781841462400"
+    - "9781841461502"
+    - "9781841462509"
   models: [naive, xgboost, catboost, crostonsba]

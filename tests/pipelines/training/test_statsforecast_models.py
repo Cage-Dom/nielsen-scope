@@ -2,8 +2,15 @@ import logging
 
 import numpy as np
 import pandas as pd
+import pytest
 
-from nielsen_scope.pipelines.training.models import get_model
+from nielsen_scope.pipelines.training.models import (
+    STATS_FREQ,
+    STATS_START,
+    STATS_UNIQUE_ID,
+    _fit_with_cap,
+    get_model,
+)
 
 HORIZON = 8
 N_POINTS = 120
@@ -56,3 +63,24 @@ def test_autoarima_over_the_cap_falls_back_to_autoets(caplog):
     assert "falling back to AutoETS" in caplog.text
     pred = predict(model, _X(HORIZON))
     assert len(pred) == HORIZON and np.all(np.isfinite(pred))
+
+
+def _frame() -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "unique_id": STATS_UNIQUE_ID,
+            "ds": pd.date_range(STATS_START, periods=N_POINTS, freq=STATS_FREQ),
+            "y": _series().to_numpy(dtype=float),
+        }
+    )
+
+
+def test_fit_with_cap_raises_the_child_error_instead_of_returning_none():
+    with pytest.raises(RuntimeError, match="KeyError: 'NoSuchModel'"):
+        _fit_with_cap("NoSuchModel", {}, _frame(), 300)
+
+
+def test_crostonsba_fit_error_is_raised_not_hidden_by_the_autoets_fallback():
+    fit, _ = get_model("crostonsba")
+    with pytest.raises(RuntimeError, match="TypeError"):
+        fit(_X(N_POINTS), _series(), {"no_such_argument": 1})

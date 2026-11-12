@@ -2,7 +2,6 @@ import numpy as np
 import optuna
 import pandas as pd
 import pytest
-from xgboost import XGBRegressor
 
 from nielsen_scope.pipelines.training import nodes
 from nielsen_scope.pipelines.training.models import get_model, predict_naive
@@ -11,7 +10,6 @@ from nielsen_scope.pipelines.training.nodes import (
     objective,
     optuna_hyperparam_tune_xgb,
     select_book_features,
-    train_final_xgb_model,
 )
 
 
@@ -96,15 +94,6 @@ def test_exclude_features_drops_and_unknown_name_raises():
 def test_get_model_unknown_type_raises():
     with pytest.raises(ValueError, match="Unknown model_type"):
         get_model("nope")
-
-
-def test_train_final_xgb_model_returns_fitted_estimator(monkeypatch):
-    monkeypatch.setattr(nodes.mlflow, "log_params", lambda *a, **k: None)
-    X, y, _ = select_book_features(_synthetic_features(), _params())
-    model = train_final_xgb_model(X, y, _params())
-    assert isinstance(model, XGBRegressor)
-    pred = model.predict(X)
-    assert len(pred) == len(X) and np.all(np.isfinite(pred))
 
 
 def _tuning_params() -> dict:
@@ -206,3 +195,42 @@ def test_relative_mae_is_nan_for_xgboost_without_lag_52(monkeypatch):
     X, y, dates = select_book_features(_synthetic_features(), params)
     metrics, _, _ = cross_validate(X, y, params, dates)
     assert np.isnan(metrics["relative_mae"])
+
+
+def test_objective_keeps_the_configured_xgboost_params(monkeypatch):
+    seen = {}
+
+    def fake_cross_validate(X, y, params, dates=None):
+        seen.update(params["model_params"]["xgboost"])
+        return {"mae_mean": 1.0}, None, None
+
+    monkeypatch.setattr(nodes, "cross_validate", fake_cross_validate)
+    X, y, _ = select_book_features(_synthetic_features(), _params())
+    trial = optuna.trial.FixedTrial({"n_estimators": 8, "max_depth": 3, "learning_rate": 0.1})
+    objective(trial, _tuning_params(), X, y, "xgboost")
+    assert seen["random_state"] == 42
+    assert seen["n_estimators"] == 8
+
+
+def test_nan_lag_52_in_a_test_window_leaves_relative_mae_undefined(monkeypatch):
+    _silence_mlflow(monkeypatch)
+    df = _synthetic_features()
+    df.loc[df.index[-5:], "volume_lag_52"] = np.nan
+    X, y, dates = select_book_features(df, _params())
+    metrics, _, fold_metrics = cross_validate(X, y, _params(), dates)
+    assert np.isfinite(metrics["mae_mean"])
+    assert np.isnan(metrics["relative_mae"])
+    assert np.isnan(fold_metrics["naive_mae"].iloc[-1])
+
+
+def test_naive_with_nan_lag_52_in_a_test_window_still_raises(monkeypatch):
+    _silence_mlflow(monkeypatch)
+    df = _synthetic_features()
+    df.loc[df.index[-5:], "volume_lag_52"] = np.nan
+    X, y, dates = select_book_features(df, _naive_params())
+    with pytest.raises(ValueError, match="NaN"):
+        cross_validate(X, y, _naive_params(), dates)
+
+def test_too_few_in_window_rows_raises_value_error():
+    with pytest.raises(ValueError, match="in-window rows"):
+        select_book_features(_synthetic_features(n=100), _params())

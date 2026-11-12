@@ -11,10 +11,8 @@ from sklearn.metrics import (
     mean_squared_error,
 )
 from sklearn.model_selection import TimeSeriesSplit
-from xgboost import XGBRegressor
 
-from .models import NAIVE_LAG_COLUMN, get_interval_predictor, get_model, predict_naive
-
+from .models import NAIVE_LAG_COLUMN, get_interval_predictor, get_model
 logger = logging.getLogger(__name__)
 
 
@@ -24,7 +22,7 @@ LAG_COLUMN = re.compile(r".+_lag_(\d+)$")
 def apply_feature_policy(X: pd.DataFrame, params: dict) -> pd.DataFrame:
     """Drop columns that are excluded by config or unavailable at forecast time.
 
-    min_lag=None keeps every column (one-step-ahead, the Stage 2 behaviour).
+    min_lag=None keeps every column (one-step-ahead).
     min_lag=L keeps *_lag_N only when N >= L, drops every *_roll_* column (their
     windows include lag 1) and keeps calendar/static columns. L below
     cv.test_horizon raises, because the lags would read actuals inside the test
@@ -73,10 +71,11 @@ def select_book_features(
     n_splits = params["cv"]["n_splits"]
     test_horizon = params["cv"]["test_horizon"]
     min_rows = n_splits * test_horizon + 1
-    assert len(df) >= min_rows, (
-        f"ISBN {isbn}: {len(df)} in-window rows < required {min_rows} "
-        f"(n_splits={n_splits} * test_horizon={test_horizon} + 1)"
-    )
+    if len(df) < min_rows:
+        raise ValueError(
+            f"ISBN {isbn}: {len(df)} in-window rows < required {min_rows} "
+            f"(n_splits={n_splits} * test_horizon={test_horizon} + 1)"
+        )
 
     #assign features and target
     y = df['volume']
@@ -129,7 +128,7 @@ def cross_validate(
     MLflow run. MAE is primary; MAPE is computed over non-zero actuals only and
     mape_excluded_rows counts the zero-actual rows left out. relative_mae is
     mae_mean divided by the seasonal-naive mae (volume_lag_52 over the same folds);
-    NaN when that column is not in X or the naive error is 0.
+    NaN when that column is not in X, has NaN in a test window, or the naive error is 0.
     Returns (metrics, predictions, fold_metrics). predictions has one row per test
     week (fold, end_date, y_true, y_pred, lo_95, hi_95); end_date is NaT when dates is
     None and lo_95/hi_95 are NaN for models without an interval function.
@@ -164,7 +163,14 @@ def cross_validate(
         actual = y_te.to_numpy()
         naive_mae = float("nan")
         if has_naive_ref:
-            naive_mae = float(mean_absolute_error(actual, predict_naive(None, X_te)))
+            naive_pred = X_te[NAIVE_LAG_COLUMN].to_numpy(dtype=float)
+            if np.isnan(naive_pred).any():
+                logger.warning(
+                    "fold %d: %s has NaN in the test window; naive_mae undefined",
+                    fold, NAIVE_LAG_COLUMN
+                )
+            else:
+                naive_mae = float(mean_absolute_error(actual, naive_pred))
         scores = _score_fold(actual, pred)
         row = {"fold": fold} | scores | {
             "naive_mae": naive_mae,
@@ -197,6 +203,8 @@ def cross_validate(
     relative_mae = float("nan")
     if not has_naive_ref:
         logger.warning("relative_mae undefined: %s is not in the features", NAIVE_LAG_COLUMN)
+    elif np.isnan(fold_naive_mae).any():
+        logger.warning("relative_mae undefined: %s has NaN in a test window", NAIVE_LAG_COLUMN)
     elif np.mean(fold_naive_mae) > 0:
         relative_mae = mae_mean / float(np.mean(fold_naive_mae))
     else:
@@ -235,6 +243,7 @@ def objective(trial, params: dict, X: pd.DataFrame, y: pd.Series, model_type: st
     #set the model params for the trial
     trial_params['model_params'] = {
         model_type: {
+            **params['model_params'].get(model_type, {}),
             "n_estimators": trial.suggest_int(
                 "n_estimators",
                 tuning_cfg['n_estimators']['lower'],
@@ -277,20 +286,3 @@ def optuna_hyperparam_tune_xgb(X: pd.DataFrame, y: pd.Series, params: dict) -> d
 
     return study.best_params
 
-
-
-def train_final_xgb_model(X: pd.DataFrame, y: pd.Series, params: dict) -> XGBRegressor:
-    """Fit the final xgb model on the full training history; the returned estimator is 
-    logged + registered in the catalogue (MLFlowModelTrackingDataset)."""
-    #load and log params
-    model_params = params["model_params"][params["model_type"]]
-    mlflow.log_params(model_params)
-
-    #train
-    model = XGBRegressor(**model_params)
-    model.fit(X, y)
-    logger.info(
-        "train_final_model: fitted %s on %d rows x %d features",
-        params["model_type"], len(X), X.shape[1],
-    )
-    return model

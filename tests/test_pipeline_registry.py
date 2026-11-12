@@ -1,3 +1,4 @@
+import yaml
 from nielsen_scope.pipeline_registry import DESTRUCTIVE_PIPELINES, default_pipeline
 from nielsen_scope.pipelines.feature_engineering.pipeline import (
     create_pipeline as feature_engineering_pipeline,
@@ -14,8 +15,7 @@ INSTANCE_NODES = [
     "bind_run_params_node",
     "select_book_features_node",
     "walk_forward_evaluate_node",
-    "write_forecasts_node",
-    "write_model_metrics_node",
+    "write_results_node",
 ]
 
 
@@ -33,13 +33,13 @@ def _names(pipeline) -> list[str]:
 
 def test_ingestion_is_the_destructive_pipeline_and_really_truncates():
     assert "ingestion" in DESTRUCTIVE_PIPELINES
-    assert "truncate_tables_node" in _names(_pipelines()["ingestion"])
+    assert "reload_tables_node" in _names(_pipelines()["ingestion"])
 
 
 def test_default_pipeline_leaves_out_ingestion():
     names = _names(default_pipeline(_pipelines()))
-    assert "truncate_tables_node" not in names
-    assert not any("truncate" in name or "drop" in name for name in names)
+    assert "reload_tables_node" not in names
+    assert not any("truncate" in name or "drop" in name or "reload" in name for name in names)
     assert set(_names(_pipelines()["training"])) <= set(names)
     assert set(_names(_pipelines()["feature_engineering"])) <= set(names)
 
@@ -54,7 +54,7 @@ def test_instance_pipeline_is_namespaced_and_registers_no_model():
 
 def test_instances_share_the_feature_table_and_the_shared_params():
     pipe = instance_pipeline("9780722532935", "naive")
-    assert pipe.inputs() == {"feature_table", "params:training", "params:postgres_connection"}
+    assert pipe.inputs() == {"feature_table", "params:training"}
 
 
 def test_training_pipeline_has_one_instance_per_isbn_and_model():
@@ -65,3 +65,33 @@ def test_training_pipeline_has_one_instance_per_isbn_and_model():
         [f"{grid['isbns'][0]}.{grid['models'][0]}"]
     )
     assert len(one.nodes) == len(INSTANCE_NODES)
+
+
+def _write_grid(conf_env_dir, isbns: list[str]) -> None:
+    conf_env_dir.mkdir(parents=True, exist_ok=True)
+    (conf_env_dir / "parameters.yml").write_text(
+        yaml.safe_dump({"training_grid": {"isbns": isbns, "models": ["naive"]}})
+    )
+
+
+def _kedro_project(tmp_path):
+    (tmp_path / "pyproject.toml").write_text('[tool.kedro]\npackage_name = "nielsen_scope"\n')
+    _write_grid(tmp_path / "conf" / "base", ["9780000000001"])
+    (tmp_path / "conf" / "local").mkdir()
+    return tmp_path
+
+
+def test_load_grid_applies_the_local_override(tmp_path, monkeypatch):
+    project = _kedro_project(tmp_path)
+    _write_grid(project / "conf" / "local", ["9780000000002"])
+    monkeypatch.chdir(project)
+    monkeypatch.delenv("KEDRO_ENV", raising=False)
+    assert load_grid()["isbns"] == ["9780000000002"]
+
+
+def test_load_grid_follows_kedro_env(tmp_path, monkeypatch):
+    project = _kedro_project(tmp_path)
+    _write_grid(project / "conf" / "ci", ["9780000000003"])
+    monkeypatch.chdir(project)
+    monkeypatch.setenv("KEDRO_ENV", "ci")
+    assert load_grid()["isbns"] == ["9780000000003"]
