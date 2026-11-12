@@ -24,5 +24,6 @@ def register_pipelines() -> dict[str, Pipeline]:
         A mapping from pipeline names to ``Pipeline`` objects.
     """
     pipelines = find_pipelines(raise_errors=True)
+    pipelines["viz_all"] = sum(pipelines.values(), start=Pipeline([]))  # docs only: includes destructive ingestion, never `kedro run` it
     pipelines["__default__"] = default_pipeline(pipelines)
     return pipelines

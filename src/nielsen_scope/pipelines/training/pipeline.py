@@ -1,20 +1,33 @@
+import os
 from functools import partial
 from pathlib import Path
 
 from kedro.config import OmegaConfigLoader
+from kedro.framework.project import settings
 from kedro.pipeline import Pipeline, node, pipeline
+from kedro.utils import find_kedro_project
 
 from .nodes import cross_validate, select_book_features
-from .persist import write_forecasts, write_model_metrics
-
-CONF_PATH = Path(__file__).resolve().parents[4] / "conf"
-
+from .persist import write_results
 
 def load_grid() -> dict:
-    """The (ISBN, model) grid from conf/base/parameters.yml `training_grid`, read when the
-    pipeline is built. Reads the base environment only, so it needs no conf/local."""
+    """The (ISBN, model) grid from `training_grid` in parameters, read when the pipeline
+    is built, with the run's config environments: conf/base, then KEDRO_ENV or the
+    default run environment (conf/local).
+
+    `kedro run --env X` is not visible here (Kedro hands it to the session only), so
+    use KEDRO_ENV=X. `--params` and `--conf-source` are not applied here either.
+    """
+    project_path = find_kedro_project(Path.cwd())
+    if project_path is None:
+        raise RuntimeError(
+            "load_grid: no Kedro project (pyproject.toml with [tool.kedro]) at or above "
+            f"{Path.cwd()}"
+        )
     loader = OmegaConfigLoader(
-        conf_source=str(CONF_PATH), base_env="base", default_run_env="base"
+        conf_source=str(project_path / settings.CONF_SOURCE),
+        env=os.getenv("KEDRO_ENV"),
+        **settings.CONFIG_LOADER_ARGS,
     )
     return loader["parameters"]["training_grid"]
 
@@ -46,29 +59,17 @@ def instance_pipeline(isbn: str, model_type: str) -> Pipeline:
             name="walk_forward_evaluate_node",
         ),
         node(
-            func=write_forecasts,
-            inputs=["cv_predictions", "run_params", "params:postgres_connection"],
-            outputs="forecasts_written",
-            name="write_forecasts_node",
-        ),
-        node(
-            func=write_model_metrics,
-            inputs=[
-                "training_metrics",
-                "cv_fold_metrics",
-                "run_params",
-                "params:postgres_connection",
-                "forecasts_written",
-            ],
-            outputs="model_metrics_written",
-            name="write_model_metrics_node",
+            func=write_results,
+            inputs=["cv_predictions", "training_metrics", "cv_fold_metrics", "run_params"],
+            outputs="results_written",
+            name="write_results_node",
         ),
     ])
     return pipeline(
         base,
         namespace=f"{isbn}.{model_type}",
         inputs={"feature_table"},
-        parameters={"training", "postgres_connection"},
+        parameters={"training"},
     )
 
 

@@ -3,6 +3,7 @@
 import logging
 import multiprocessing
 import time
+import traceback
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -79,12 +80,16 @@ def _build_statsforecast(model_name: str, model_params: dict) -> StatsForecast:
     model = model_classes[model_name](**model_params)
     return StatsForecast(models=[model], freq=STATS_FREQ)
 
-
 def _fit_worker(model_name: str, model_params: dict, frame: pd.DataFrame, conn) -> None:
-    sf = _build_statsforecast(model_name, model_params)
-    sf.fit(frame)
-    conn.send(sf)
-    conn.close()
+    """Child process: send ("ok", fitted StatsForecast) or ("error", traceback text)."""
+    try:
+        sf = _build_statsforecast(model_name, model_params)
+        sf.fit(frame)
+        conn.send(("ok", sf))
+    except Exception:
+        conn.send(("error", traceback.format_exc()))
+    finally:
+        conn.close()
 
 
 def _fit_with_cap(
@@ -93,8 +98,10 @@ def _fit_with_cap(
     """Fit in a spawned subprocess and kill it after timeout seconds.
 
     statsforecast models have no timeout argument, so the cap has to be external.
-    Returns None when the fit timed out or the subprocess died; timeout=None
-    waits for ever.
+    Returns None only when the fit timed out (the caller falls back). Raises
+    RuntimeError with the child's traceback when the fit raised, and RuntimeError
+    with the exit code when the child died without sending a result.
+    timeout=None waits for ever.
     """
     ctx = multiprocessing.get_context("spawn")
     receiver, sender = ctx.Pipe(duplex=False)
@@ -103,17 +110,23 @@ def _fit_with_cap(
     )
     proc.start()
     sender.close()
-    fitted = None
     try:
-        if receiver.poll(timeout):
-            fitted = receiver.recv()
-    except EOFError:
-        pass
-    if fitted is None:
-        proc.terminate()
-    proc.join()
-    receiver.close()
-    return fitted
+        if not receiver.poll(timeout):
+            proc.terminate()
+            return None
+        try:
+            status, payload = receiver.recv()
+        except EOFError:
+            proc.join()
+            raise RuntimeError(
+                f"{model_name} fit subprocess exited (code {proc.exitcode}) without a result"
+            ) from None
+    finally:
+        proc.join()
+        receiver.close()
+    if status == "error":
+        raise RuntimeError(f"{model_name} fit failed in the subprocess:\n{payload}")
+    return payload
 
 
 def _fit_statsforecast(
@@ -135,7 +148,7 @@ def _fit_statsforecast(
     fell_back = sf is None
     if fell_back:
         logger.warning(
-            "%s fit did not finish within %ss (%.1fs elapsed) or failed; "
+            "%s fit did not finish within %ss (%.1fs elapsed); "
             "falling back to AutoETS",
             model_name, timeout, elapsed,
         )

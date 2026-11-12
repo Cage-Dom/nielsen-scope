@@ -6,12 +6,11 @@ from types import SimpleNamespace
 import numpy as np
 import pandas as pd
 import pytest
-import yaml
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError, OperationalError
 
-from nielsen_scope.pipelines.ingestion.nodes import truncate_tables
+from nielsen_scope.pipelines.ingestion.nodes import reload_tables, truncate_tables
 from nielsen_scope.pipelines.training import persist
 from nielsen_scope.pipelines.training.persist import (
     build_forecast_rows,
@@ -19,8 +18,7 @@ from nielsen_scope.pipelines.training.persist import (
     current_run_id,
     ensure_book_exists,
     replace_rows,
-    write_forecasts,
-    write_model_metrics,
+    write_results,
 )
 
 ROOT = Path(__file__).resolve().parents[3]
@@ -238,11 +236,12 @@ def _write_metrics(engine, run_id: str, flags=None) -> None:
         replace_rows(conn, "model_metrics", rows)
 
 
+# Read at import, before the autouse fixture in tests/conftest.py unsets it.
+PROJECT_DB_URL = os.environ.get("NIELSEN_DB_URL")
+
+
 def _project_db_url() -> str | None:
-    local = ROOT / "conf/local/parameters.yml"
-    if not local.exists():
-        return None
-    return yaml.safe_load(local.read_text()).get("postgres_connection")
+    return PROJECT_DB_URL
 
 
 @pytest.fixture
@@ -250,7 +249,7 @@ def project_db_readonly():
     """The project database through a read-only connection: for reading real data only."""
     url = _project_db_url()
     if not url:
-        pytest.skip("no project database url in conf/local/parameters.yml")
+        pytest.skip("NIELSEN_DB_URL is not set")
     engine = create_engine(
         url, connect_args={"options": "-c default_transaction_read_only=on"}
     )
@@ -322,41 +321,36 @@ def test_ensure_book_exists_accepts_a_loaded_isbn(db):
         ensure_book_exists(conn, ISBN)
 
 
-def test_write_nodes_store_the_run_for_a_known_isbn(db, monkeypatch):
+def test_write_results_stores_the_run_for_a_known_isbn(db, monkeypatch):
     _add_book(db)
     _fake_run(monkeypatch)
-    connection_string = _connection_string(db)
-    assert write_forecasts(_predictions(), _params(), connection_string) == "forecasts_written"
+    monkeypatch.setenv("NIELSEN_DB_URL", _connection_string(db))
     assert (
-        write_model_metrics(_metrics(), _fold_metrics(), _params(), connection_string, "x")
-        == "model_metrics_written"
+        write_results(_predictions(), _metrics(), _fold_metrics(), _params())
+        == "results_written"
     )
     assert _count(db, "forecasts") == N_FORECAST_ROWS
     assert _count(db, "model_metrics") == N_METRIC_ROWS
 
 
-def test_write_nodes_reject_an_unknown_isbn_and_write_nothing(db, monkeypatch):
+def test_write_results_rejects_an_unknown_isbn_and_writes_nothing(db, monkeypatch):
     _fake_run(monkeypatch)
-    connection_string = _connection_string(db)
+    monkeypatch.setenv("NIELSEN_DB_URL", _connection_string(db))
     with pytest.raises(ValueError, match="not in the books table"):
-        write_forecasts(_predictions(), _params(), connection_string)
-    with pytest.raises(ValueError, match="not in the books table"):
-        write_model_metrics(_metrics(), _fold_metrics(), _params(), connection_string, "x")
+        write_results(_predictions(), _metrics(), _fold_metrics(), _params())
     assert _count(db, "forecasts") == 0
     assert _count(db, "model_metrics") == 0
 
 
-def test_history_tables_have_no_foreign_keys(db):
-    """A foreign key to books would make ingestion's TRUNCATE ... CASCADE empty them."""
-    with db.connect() as conn:
-        constraints = conn.execute(
-            text(
-                "SELECT c.relname FROM pg_constraint k JOIN pg_class c ON c.oid = k.conrelid "
-                "WHERE k.contype = 'f' AND c.relname IN ('forecasts', 'model_metrics') "
-                "AND c.relnamespace = (SELECT oid FROM pg_namespace WHERE nspname = current_schema())"
-            )
-        ).all()
-    assert constraints == []
+def test_write_results_rolls_back_forecasts_when_the_metrics_insert_fails(db, monkeypatch):
+    """Every fold row says fold 0, so the model_metrics UNIQUE key rejects the insert."""
+    _add_book(db)
+    _fake_run(monkeypatch)
+    monkeypatch.setenv("NIELSEN_DB_URL", _connection_string(db))
+    with pytest.raises(IntegrityError):
+        write_results(_predictions(), _metrics(), _fold_metrics().assign(fold=0), _params())
+    assert _count(db, "forecasts") == 0
+    assert _count(db, "model_metrics") == 0
 
 
 def test_rewriting_the_same_run_keeps_row_counts(db):
@@ -477,7 +471,104 @@ def test_history_survives_the_ingestion_truncate(db):
     _add_book(db)
     _write_forecasts(db, RUN_A)
     _write_metrics(db, RUN_A)
-    assert truncate_tables(_connection_string(db), "schema_ready") == "tables_truncated"
+    with db.begin() as conn:
+          truncate_tables(conn)
     assert _count(db, "books") == 0
     assert _count(db, "forecasts") == N_FORECAST_ROWS
     assert _count(db, "model_metrics") == N_METRIC_ROWS
+
+
+NEW_ISBN = "9780000000002"
+SHEET_NAME_MAPPINGS = {"F": "Adult Fiction"}
+ISBN_FIELD_MAPPINGS = {"ISBN": "isbn", "Title": "title"}
+SALES_FIELD_MAPPINGS = {
+    "ISBN": "isbn",
+    "End_Date": "end_date",
+    "Volume": "volume",
+    "Value": "sale_value",
+    "ASP": "asp",
+}
+
+
+def _isbn_dim(isbn: str = NEW_ISBN) -> pd.DataFrame:
+    return pd.DataFrame({"ISBN": [isbn], "Title": ["New Book"], "category": ["F"]})
+
+
+def _sales_filled(isbn: str = NEW_ISBN) -> pd.DataFrame:
+    return pd.DataFrame(
+        {
+            "ISBN": [isbn],
+            "End_Date": [pd.Timestamp("2024-01-07")],
+            "Volume": [3],
+            "Value": [29.97],
+            "ASP": [9.99],
+            "category": ["F"],
+        }
+    )
+
+
+def _reload(isbn_dim: pd.DataFrame, sales_filled: pd.DataFrame) -> str:
+    return reload_tables(
+        isbn_dim,
+        sales_filled,
+        SHEET_NAME_MAPPINGS,
+        ISBN_FIELD_MAPPINGS,
+        SALES_FIELD_MAPPINGS,
+        "schema_ready",
+    )
+
+
+def _book_isbns(engine) -> list[str]:
+    with engine.connect() as conn:
+        return conn.execute(text("SELECT isbn FROM books")).scalars().all()
+
+
+def test_reload_replaces_categories_books_and_sales(db, monkeypatch):
+    _add_book(db)
+    monkeypatch.setenv("NIELSEN_DB_URL", _connection_string(db))
+    assert _reload(_isbn_dim(), _sales_filled()) == "tables_reloaded"
+    assert _book_isbns(db) == [NEW_ISBN]
+    assert _count(db, "sales") == 1
+    assert _count(db, "categories") == 1
+
+
+def test_reload_rolls_back_to_the_old_tables_when_a_load_fails(db, monkeypatch):
+    _add_book(db)
+    monkeypatch.setenv("NIELSEN_DB_URL", _connection_string(db))
+    with pytest.raises(IntegrityError):
+        _reload(_isbn_dim(), _sales_filled(isbn="9999999999999"))
+    assert _book_isbns(db) == [ISBN]
+    assert _count(db, "categories") == 1
+
+FEATURES_SQL = ROOT / "src/nielsen_scope/sql/features.sql"
+N_WEEKS = 60
+
+
+def _load_weekly_sales(engine) -> None:
+    _add_book(engine)
+    weeks = pd.date_range("2012-01-01", periods=N_WEEKS, freq="W")
+    sales = pd.DataFrame(
+        {
+            "isbn": ISBN,
+            "end_date": weeks.date,
+            "volume": np.arange(N_WEEKS),
+            "sale_value": np.arange(N_WEEKS) * 10.0,
+            "asp": 10.0,
+        }
+    )
+    with engine.begin() as conn:
+        sales.to_sql("sales", conn, if_exists="append", index=False)
+
+
+def test_features_sql_lags_and_rolls_read_only_past_weeks(db):
+    _load_weekly_sales(db)
+    with db.connect() as conn:
+        features = pd.read_sql(text(FEATURES_SQL.read_text()), conn)
+    assert len(features) == N_WEEKS
+    assert float(features["volume_lag_1"].iloc[1]) == 0.0
+    assert pd.isna(features["volume_lag_52"].iloc[51])
+    assert float(features["volume_lag_52"].iloc[52]) == 0.0
+    assert float(features["volume_lag_52"].iloc[59]) == 7.0
+    assert float(features["volume_roll_4"].iloc[4]) == pytest.approx(1.5)
+    assert float(features["sale_value_lag_1"].iloc[1]) == pytest.approx(0.0)
+    assert set(features["category"]) == {"F"}

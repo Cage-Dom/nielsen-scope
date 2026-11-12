@@ -7,6 +7,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection
+from nielsen_scope.db import db_url
 
 logger = logging.getLogger(__name__)
 
@@ -146,37 +147,28 @@ def replace_rows(conn: Connection, table: str, rows: pd.DataFrame) -> None:
     rows.to_sql(table, conn, if_exists="append", index=False, method="multi")
 
 
-def write_forecasts(
-    predictions: pd.DataFrame, params: dict, connection_string: str
-) -> str:
-    """Kedro node: write the backtest predictions of the active MLflow run."""
-    rows = build_forecast_rows(predictions, params, current_run_id())
-    engine = create_engine(connection_string)
-    try:
-        with engine.begin() as conn:
-            ensure_book_exists(conn, rows["isbn"].iloc[0])
-            replace_rows(conn, "forecasts", rows)
-    finally:
-        engine.dispose()
-    logger.info("write_forecasts: %d rows for %s/%s", len(rows), rows["isbn"].iloc[0], rows["model_type"].iloc[0])
-    return "forecasts_written"
-
-
-def write_model_metrics(
+def write_results(
+    predictions: pd.DataFrame,
     metrics: dict,
     fold_metrics: pd.DataFrame,
     params: dict,
-    connection_string: str,
-    _forecasts_written: str,
 ) -> str:
-    """Kedro node: write the metrics of the active MLflow run."""
-    rows = build_metric_rows(metrics, fold_metrics, params, current_run_id())
-    engine = create_engine(connection_string)
+    """Kedro node: write the active MLflow run's backtest forecasts and metrics in one
+    transaction, so a failed metrics insert leaves no orphan forecast rows."""
+    run_id = current_run_id()
+    forecast_rows = build_forecast_rows(predictions, params, run_id)
+    metric_rows = build_metric_rows(metrics, fold_metrics, params, run_id)
+    isbn = forecast_rows["isbn"].iloc[0]
+    engine = create_engine(db_url())
     try:
         with engine.begin() as conn:
-            ensure_book_exists(conn, rows["isbn"].iloc[0])
-            replace_rows(conn, "model_metrics", rows)
+            ensure_book_exists(conn, isbn)
+            replace_rows(conn, "forecasts", forecast_rows)
+            replace_rows(conn, "model_metrics", metric_rows)
     finally:
         engine.dispose()
-    logger.info("write_model_metrics: %d rows for %s/%s", len(rows), rows["isbn"].iloc[0], rows["model_type"].iloc[0])
-    return "model_metrics_written"
+    logger.info(
+        "write_results: %d forecast rows, %d metric rows for %s/%s",
+        len(forecast_rows), len(metric_rows), isbn, params["model_type"],
+    )
+    return "results_written"
