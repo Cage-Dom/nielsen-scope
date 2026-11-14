@@ -572,3 +572,12 @@ def test_features_sql_lags_and_rolls_read_only_past_weeks(db):
     assert float(features["volume_roll_4"].iloc[4]) == pytest.approx(1.5)
     assert float(features["sale_value_lag_1"].iloc[1]) == pytest.approx(0.0)
     assert set(features["category"]) == {"F"}
+
+def test_features_sql_week_of_year_starts_at_one_on_new_year(db):
+    _load_weekly_sales(db)
+    with db.connect() as conn:
+        features = pd.read_sql(text(FEATURES_SQL.read_text()), conn)
+    first = features.iloc[0]
+    assert pd.Timestamp(first["end_date"]) == pd.Timestamp("2012-01-01")
+    assert first["week_of_year"] == 1
+    assert features["week_of_year"].between(1, 53).all()

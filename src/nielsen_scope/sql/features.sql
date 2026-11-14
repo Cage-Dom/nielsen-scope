@@ -25,7 +25,7 @@ SELECT
     LAG(s.asp, 1)        OVER w AS asp_lag_1,
     LAG(s.sale_value, 1) OVER w AS sale_value_lag_1,
     -- EXTRACT pulls one calendar part out of a date; ::int casts it to a whole number
-    EXTRACT(WEEK    FROM s.end_date)::int AS week_of_year,
+    ((EXTRACT(DOY   FROM s.end_date)::int - 1) / 7 + 1) AS week_of_year,
     EXTRACT(MONTH   FROM s.end_date)::int AS month,
     EXTRACT(QUARTER FROM s.end_date)::int AS quarter,
     EXTRACT(YEAR    FROM s.end_date)::int AS year,

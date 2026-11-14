@@ -89,7 +89,7 @@ def test_legacy_features_reproduce_stage2_one_step_mae(features):
     params = _params()
     X, y, dates = select_book_features(features, params)
     metrics, _, _ = cross_validate(X, y, params, dates)
-    assert metrics["mae_mean"] == pytest.approx(92.9642066955566, abs=1e-4)
+    assert metrics["mae_mean"] == pytest.approx(95.57053833007812, abs=1e-4)
 
 
 def test_direct_features_reproduce_year_ablation_mae(features):
@@ -99,7 +99,7 @@ def test_direct_features_reproduce_year_ablation_mae(features):
         "volume_lag_52", "week_of_year", "month", "quarter", "rrp",
     ]
     metrics, _, _ = cross_validate(X, y, params, dates)
-    assert metrics["mae_mean"] == pytest.approx(174.349, abs=5e-4)
+    assert metrics["mae_mean"] == pytest.approx(176.8497, abs=5e-4)
 
 
 def test_naive_reproduces_planned_baseline_mae(features):
@@ -122,7 +122,7 @@ def test_xgboost_relative_mae_against_naive(features):
     params = _params()
     X, y, dates = select_book_features(features, params)
     metrics, _, _ = cross_validate(X, y, params, dates)
-    assert metrics["relative_mae"] == pytest.approx(0.55495, abs=5e-5)
+    assert metrics["relative_mae"] == pytest.approx(0.57051, abs=5e-5)
 
 
 @pytest.mark.skipif(not RAW_XLSX.exists(), reason="raw xlsx not present")

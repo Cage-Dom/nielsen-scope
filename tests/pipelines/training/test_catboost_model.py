@@ -76,8 +76,8 @@ def test_catboost_legacy_features_reproduce_spike_mae(features):
     params = _catboost_params()
     X, y, dates = select_book_features(features, params)
     metrics, _, _ = cross_validate(X, y, params, dates)
-    assert metrics["mae_mean"] == pytest.approx(89.74814438, abs=5e-4)
-    assert metrics["relative_mae"] == pytest.approx(0.535750, abs=1e-6)
+    assert metrics["mae_mean"] == pytest.approx(93.13750283, abs=5e-4)
+    assert metrics["relative_mae"] == pytest.approx(0.555983, abs=1e-6)
 
 
 @pytest.mark.skipif(not PARQUET.exists(), reason="feature parquet not built")
@@ -85,5 +85,5 @@ def test_catboost_direct_features_reproduce_spike_mae(features):
     params = _catboost_params(min_lag=32, exclude_features=["year"])
     X, y, dates = select_book_features(features, params)
     metrics, _, _ = cross_validate(X, y, params, dates)
-    assert metrics["mae_mean"] == pytest.approx(163.32127515, abs=5e-4)
-    assert metrics["relative_mae"] == pytest.approx(0.974943, abs=1e-6)
+    assert metrics["mae_mean"] == pytest.approx(158.25237627, abs=5e-4)
+    assert metrics["relative_mae"] == pytest.approx(0.944685, abs=1e-6)
