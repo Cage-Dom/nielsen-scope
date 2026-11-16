@@ -68,3 +68,13 @@ CREATE TABLE IF NOT EXISTS model_metrics (
     ingested_at  timestamptz  NOT NULL DEFAULT now(),
     UNIQUE NULLS NOT DISTINCT (isbn, model_type, run_id, metric, fold)
 );
+
+CREATE TABLE IF NOT EXISTS feature_snapshots (
+    run_id          varchar(32)  PRIMARY KEY,
+    file_path       text         NOT NULL,
+    n_rows          integer      NOT NULL,
+    n_cols          smallint     NOT NULL,
+    feature_columns text         NOT NULL,
+    data_version    varchar(40)  NOT NULL DEFAULT 'nielsen_raw',
+    ingested_at     timestamptz  NOT NULL DEFAULT now()
+);
