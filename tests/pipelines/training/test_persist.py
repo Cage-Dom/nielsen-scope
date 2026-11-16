@@ -10,12 +10,13 @@ from sqlalchemy import create_engine, text
 from sqlalchemy.engine import make_url
 from sqlalchemy.exc import IntegrityError, OperationalError
 
+from nielsen_scope import db as nielsen_db
+from nielsen_scope.db import current_run_id
 from nielsen_scope.pipelines.ingestion.nodes import reload_tables, truncate_tables
 from nielsen_scope.pipelines.training import persist
 from nielsen_scope.pipelines.training.persist import (
     build_forecast_rows,
     build_metric_rows,
-    current_run_id,
     ensure_book_exists,
     replace_rows,
     write_results,
@@ -178,7 +179,7 @@ def test_metric_rows_leave_the_flag_null_for_models_that_cannot_fall_back():
 
 
 def test_current_run_id_needs_an_active_run(monkeypatch):
-    monkeypatch.setattr(persist.mlflow, "active_run", lambda: None)
+    monkeypatch.setattr(nielsen_db.mlflow, "active_run", lambda: None)
     with pytest.raises(RuntimeError, match="no active MLflow run"):
         current_run_id()
 
@@ -307,7 +308,7 @@ def _add_book(engine) -> None:
 
 def _fake_run(monkeypatch, run_id: str = RUN_A) -> None:
     run = SimpleNamespace(info=SimpleNamespace(run_id=run_id))
-    monkeypatch.setattr(persist.mlflow, "active_run", lambda: run)
+    monkeypatch.setattr(nielsen_db.mlflow, "active_run", lambda: run)
 
 
 def test_ensure_book_exists_rejects_an_unknown_isbn(db):
