@@ -2,12 +2,11 @@
 
 import logging
 
-import mlflow
 import numpy as np
 import pandas as pd
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection
-from nielsen_scope.db import db_url
+from nielsen_scope.db import current_run_id, db_url
 
 logger = logging.getLogger(__name__)
 
@@ -30,14 +29,6 @@ AGGREGATE_METRICS = {
 }
 # cross_validate fold_metrics column -> model_metrics.metric (one row per fold)
 FOLD_METRICS = ["mae", "rmse", "mape", "rel_mae", "mape_excluded_rows"]
-
-
-def current_run_id() -> str:
-    """The id of the active MLflow run (the join key to MLflow)."""
-    run = mlflow.active_run()
-    if run is None:
-        raise RuntimeError("no active MLflow run: run_id is the join key to MLflow")
-    return run.info.run_id
 
 
 def build_forecast_rows(predictions: pd.DataFrame, params: dict, run_id: str) -> pd.DataFrame:
