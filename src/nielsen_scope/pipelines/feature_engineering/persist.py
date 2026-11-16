@@ -1,16 +1,14 @@
-"""Persist a snapshot of the feature engineering table: a run-stamped 
-parquet file on disk, tracked by one row in Postgres so a past snapshot 
+"""Persist a snapshot of the feature engineering table: a run-stamped
+parquet file on disk, tracked by one row in Postgres so a past snapshot
 can be reloaded to retrain a model without re-running the feature pipeline"""
 
 import logging
 from pathlib import Path
-from typing import final
 
 import pandas as pd
-from sqlalchemy import text, create_engine
+from sqlalchemy import create_engine, text
 
-from nielsen_scope.db import db_url
-from nielsen_scope.pipelines.training.persist import DATA_VERSION, current_run_id
+from nielsen_scope.db import current_run_id, db_url
 
 logger = logging.getLogger(__name__)
 
