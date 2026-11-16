@@ -13,6 +13,7 @@ from sklearn.metrics import (
 from sklearn.model_selection import TimeSeriesSplit
 
 from .models import NAIVE_LAG_COLUMN, get_interval_predictor, get_model
+
 logger = logging.getLogger(__name__)
 
 
@@ -116,7 +117,7 @@ def _log_fold(row: dict, prefix: str) -> None:
         mlflow.log_metric(f"{prefix}fold_relative_mae", row["rel_mae"], step=fold)
 
 
-def cross_validate(
+def cross_validate(  # noqa: PLR0915 — walk-forward CV reads clearer as one block than split helpers
     X: pd.DataFrame,
     y: pd.Series,
     params: dict,

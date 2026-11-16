@@ -10,6 +10,7 @@ from kedro.utils import find_kedro_project
 from .nodes import cross_validate, select_book_features
 from .persist import write_results
 
+
 def load_grid() -> dict:
     """The (ISBN, model) grid from `training_grid` in parameters, read when the pipeline
     is built, with the run's config environments: conf/base, then KEDRO_ENV or the

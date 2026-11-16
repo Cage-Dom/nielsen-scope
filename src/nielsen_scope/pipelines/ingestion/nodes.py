@@ -22,8 +22,8 @@ def create_schema() -> str:
         with engine.begin() as conn:
             # schema.sql holds CREATE statements only, with no ';' in comments or
             # literals (pinned by test_schema_sql_splits_into_create_statements_only)
-            for statement in sql.split(";"):
-                statement = statement.strip()
+            for raw_statement in sql.split(";"):
+                statement = raw_statement.strip()
                 if statement:
                     conn.execute(text(statement))
     finally:
@@ -58,7 +58,7 @@ def _read_excel_concat(sheets: dict) -> pd.DataFrame:
             raise KeyError(
                 f"No 'ISBN' column after concat; sheets={list(sheets)}, "
                 f"columns={list(df.columns)}")
-        
+
         #rename for mapping later and trim so just the letter identifier
         df = df.rename(columns={'sheet_name': 'category'})
         df['category'] = df['category'].apply(lambda x: x[0])
@@ -83,7 +83,7 @@ def ingest_sales_data(sheets: dict) -> pd.DataFrame:
     df["End_Date"] = pd.to_datetime(df["End_Date"])
     return df.sort_values("End_Date").reset_index(drop=True)
 
-    
+
 def resample_weekly(df: pd.DataFrame) -> pd.DataFrame:
     """Aggregate sales data to weekly per ISBN"""
     df = (
@@ -126,7 +126,7 @@ def fill_missing_weeks(df: pd.DataFrame) -> pd.DataFrame:
     df[["Volume", "Value", "ASP"]] = df[["Volume", "Value", "ASP"]].fillna(0)
     #fill null from captured lookup
     df["category"] = df["category"].fillna(df["ISBN"].map(isbn_category))
-    
+
     return df
 
 def ingest_isbn_static(sheets: dict) -> pd.DataFrame:
@@ -197,4 +197,3 @@ def reload_tables(
 
 
 
-    

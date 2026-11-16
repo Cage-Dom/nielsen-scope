@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 from sqlalchemy import create_engine, text
 from sqlalchemy.engine import Connection
+
 from nielsen_scope.db import current_run_id, db_url
 
 logger = logging.getLogger(__name__)

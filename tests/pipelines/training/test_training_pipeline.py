@@ -59,13 +59,15 @@ def test_cross_validate_returns_finite_metrics_and_predictions(monkeypatch):
     monkeypatch.setattr(nodes.mlflow, "log_metrics", lambda *a, **k: None)
     X, y, dates = select_book_features(_synthetic_features(), _params())
     metrics, preds, _ = cross_validate(X, y, _params(), dates)
-    assert metrics["n_folds"] == 5
+    expected_folds = 5
+    assert metrics["n_folds"] == expected_folds
     assert np.isfinite(metrics["mae_mean"])
     assert np.isfinite(metrics["rmse_mean"])
     assert list(preds.columns) == [
         "fold", "end_date", "y_true", "y_pred", "lo_95", "hi_95",
     ]
-    assert len(preds) == 160 and preds["end_date"].is_unique
+    expected_rows = 160
+    assert len(preds) == expected_rows and preds["end_date"].is_unique
 
 
 def test_min_lag_drops_short_lags_and_rolls():
@@ -135,9 +137,12 @@ def test_tuner_returns_best_params_within_bounds(monkeypatch):
     X, y, _ = select_book_features(_synthetic_features(), _params())
     best = optuna_hyperparam_tune_xgb(X, y, _tuning_params())
     assert set(best) == {"n_estimators", "max_depth", "learning_rate"}
-    assert 5 <= best["n_estimators"] <= 10
-    assert 2 <= best["max_depth"] <= 3
-    assert 0.05 <= best["learning_rate"] <= 0.2
+    n_estimators_lower, n_estimators_upper = 5, 10
+    max_depth_lower, max_depth_upper = 2, 3
+    learning_rate_lower, learning_rate_upper = 0.05, 0.2
+    assert n_estimators_lower <= best["n_estimators"] <= n_estimators_upper
+    assert max_depth_lower <= best["max_depth"] <= max_depth_upper
+    assert learning_rate_lower <= best["learning_rate"] <= learning_rate_upper
 
 
 ZEROED_ROWS = 10
@@ -208,8 +213,9 @@ def test_objective_keeps_the_configured_xgboost_params(monkeypatch):
     X, y, _ = select_book_features(_synthetic_features(), _params())
     trial = optuna.trial.FixedTrial({"n_estimators": 8, "max_depth": 3, "learning_rate": 0.1})
     objective(trial, _tuning_params(), X, y, "xgboost")
-    assert seen["random_state"] == 42
-    assert seen["n_estimators"] == 8
+    expected_random_state, expected_n_estimators = 42, 8
+    assert seen["random_state"] == expected_random_state
+    assert seen["n_estimators"] == expected_n_estimators
 
 
 def test_nan_lag_52_in_a_test_window_leaves_relative_mae_undefined(monkeypatch):

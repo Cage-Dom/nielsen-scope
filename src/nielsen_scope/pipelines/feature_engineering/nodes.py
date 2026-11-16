@@ -1,10 +1,11 @@
 import logging
+
 import pandas as pd
 
 logger = logging.getLogger(__name__)
 
 def build_feature_table(features: pd.DataFrame) -> pd.DataFrame:
-    """Persists the SQL feature engineering step as pandas dataframe 
+    """Persists the SQL feature engineering step as pandas dataframe
     via the feature_table, logging various characteristics"""
 
     logger.info(

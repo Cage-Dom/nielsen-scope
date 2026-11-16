@@ -13,7 +13,6 @@ from sqlalchemy.exc import IntegrityError, OperationalError
 from nielsen_scope import db as nielsen_db
 from nielsen_scope.db import current_run_id
 from nielsen_scope.pipelines.ingestion.nodes import reload_tables, truncate_tables
-from nielsen_scope.pipelines.training import persist
 from nielsen_scope.pipelines.training.persist import (
     build_forecast_rows,
     build_metric_rows,
@@ -569,7 +568,8 @@ def test_features_sql_lags_and_rolls_read_only_past_weeks(db):
     assert float(features["volume_lag_1"].iloc[1]) == 0.0
     assert pd.isna(features["volume_lag_52"].iloc[51])
     assert float(features["volume_lag_52"].iloc[52]) == 0.0
-    assert float(features["volume_lag_52"].iloc[59]) == 7.0
+    expected_lag_52 = 7.0
+    assert float(features["volume_lag_52"].iloc[59]) == expected_lag_52
     assert float(features["volume_roll_4"].iloc[4]) == pytest.approx(1.5)
     assert float(features["sale_value_lag_1"].iloc[1]) == pytest.approx(0.0)
     assert set(features["category"]) == {"F"}

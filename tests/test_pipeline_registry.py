@@ -1,4 +1,5 @@
 import yaml
+
 from nielsen_scope.pipeline_registry import DESTRUCTIVE_PIPELINES, default_pipeline
 from nielsen_scope.pipelines.feature_engineering.pipeline import (
     create_pipeline as feature_engineering_pipeline,

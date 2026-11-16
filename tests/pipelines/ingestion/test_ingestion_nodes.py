@@ -25,7 +25,7 @@ BOOKS_COLUMNS = {
     "isbn", "title", "author", "imprint", "publisher_group", "rrp", "binding",
     "publication_date", "country_of_publication", "product_class", "category",
 }
-N_SCHEMA_STATEMENTS = 6
+N_SCHEMA_STATEMENTS = 7
 
 
 def _isbn_sheet(isbn: str, title: str) -> pd.DataFrame:
@@ -104,7 +104,8 @@ def test_fill_missing_weeks_zero_fills_gaps_up_to_the_last_week():
         }
     )
     out = fill_missing_weeks(weekly)
-    assert len(out) == 5
+    expected_weeks = 5
+    assert len(out) == expected_weeks
     a = out[out["ISBN"] == ISBN_A].set_index("End_Date")
     assert a.loc[pd.Timestamp("2024-01-14"), "Volume"] == 0
     assert a.loc[pd.Timestamp("2024-01-14"), "category"] == "F"
